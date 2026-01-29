@@ -1,0 +1,116 @@
+# =============================================================================
+# Absolute Palworld Server - Docker Compose for E2E Testing
+# =============================================================================
+# This file is used for CI/CD testing. It avoids host port binding to prevent
+# conflicts when ports are already in use.
+# =============================================================================
+
+services:
+  palworld:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: absolute-palworld-server:test
+    container_name: palworld-server
+
+    # =========================================================================
+    # TEST CONFIGURATION
+    # =========================================================================
+    environment:
+      # Server settings for testing
+      - SERVER_NAME=E2E Test Server
+      - SERVER_PORT=8211
+      - SERVER_DESCRIPTION=E2E Test Server
+      - SERVER_PASSWORD=testpass123
+      - ADMIN_PASSWORD=admintest123
+      - SERVER_PUBLIC=false
+      - MAX_PLAYERS=4
+      - SERVER_ARGS=
+
+      # Game settings (defaults for testing)
+      - DIFFICULTY=None
+      - DAY_TIME_SPEED_RATE=1.0
+      - NIGHT_TIME_SPEED_RATE=1.0
+      - EXP_RATE=1.0
+      - PAL_CAPTURE_RATE=1.0
+      - DEATH_PENALTY=None
+      - IS_PVP=false
+
+      # RCON settings
+      - RCON_ENABLED=false
+      - RCON_PORT=25575
+
+      # Update settings
+      - UPDATE_ON_START=true
+      - UPDATE_TIMEOUT=600
+      - UPDATE_CRON=
+      - UPDATE_IF_IDLE=true
+      - STEAMCMD_ARGS=validate
+
+      # Backup settings
+      - BACKUPS_ENABLED=true
+      - BACKUPS_CRON=0 * * * *
+      - BACKUPS_DIRECTORY=/config/backups
+      - BACKUPS_MAX_AGE=3
+      - BACKUPS_MAX_COUNT=0
+      - BACKUPS_ZIP=true
+      - BACKUPS_IF_IDLE=false
+
+      # Permission settings
+      - PUID=1000
+      - PGID=1000
+      - PERMISSIONS_UMASK=022
+
+      # System settings
+      - TZ=Etc/UTC
+
+      # Log filtering
+      - LOG_FILTER_EMPTY=true
+      - LOG_FILTER_UTF8=true
+      - LOG_FILTER_CONTAINS=
+
+    # Don't bind to host ports in CI to avoid conflicts
+    # Tests will use docker exec and docker logs instead of network queries
+    expose:
+      - "8211/udp"
+      - "27015/udp"
+      - "25575/tcp"
+
+    # Volume mounts - use bind mounts for local debugging, named volumes for CI
+    # Set USE_BIND_MOUNTS=true to use local ./data folder
+    volumes:
+      - ${USE_BIND_MOUNTS:+./data/config}${USE_BIND_MOUNTS:-palworld-test-config}:/config
+      - ${USE_BIND_MOUNTS:+./data/server}${USE_BIND_MOUNTS:-palworld-test-server}:/opt/palworld/server
+
+    # Graceful shutdown timeout (allows world save)
+    stop_grace_period: 2m
+
+    # Don't restart in test mode
+    restart: "no"
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 8G
+
+    # Allow setting thread priority (optional, improves performance)
+    cap_add:
+      - SYS_NICE
+
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# Named volumes for test isolation
+volumes:
+  palworld-test-config:
+    name: palworld-test-config
+
+  palworld-test-server:
+    name: palworld-test-server

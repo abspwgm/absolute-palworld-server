@@ -1,0 +1,215 @@
+#!/bin/bash
+# =============================================================================
+# Palworld Server - Start/stop script for the dedicated server
+# =============================================================================
+
+# Don't use set -e for the server script - handle errors explicitly
+# This prevents premature exits during graceful shutdown
+
+# Source common functions
+if ! source /opt/palworld/scripts/common; then
+    echo "[ERROR] Failed to source common functions"
+    exit 1
+fi
+
+# -----------------------------------------------------------------------------
+# Build server arguments
+# -----------------------------------------------------------------------------
+build_server_args() {
+    local args=""
+
+    # Server port
+    args="${args} -port=$(get_server_port)"
+
+    # Query port (usually port + 1 for Steam queries)
+    local query_port=$(($(get_server_port) + 16804))
+    args="${args} -queryport=27015"
+
+    # Additional custom arguments
+    if [[ -n "${SERVER_ARGS}" ]]; then
+        args="${args} ${SERVER_ARGS}"
+    fi
+
+    # EpicApp for crossplay support (required for dedicated servers)
+    args="${args} EpicApp=PalServer"
+
+    echo "${args}"
+}
+
+# -----------------------------------------------------------------------------
+# Start server
+# -----------------------------------------------------------------------------
+start_server() {
+    log_info "Starting Palworld dedicated server"
+
+    # Check if already running
+    if is_server_running; then
+        log_warn "Server is already running (PID: $(get_server_pid))"
+        return 0
+    fi
+
+    # Verify binary exists
+    if [[ ! -f "${PALWORLD_SERVER_BINARY}" ]]; then
+        log_error "Server binary not found: ${PALWORLD_SERVER_BINARY}"
+        return 1
+    fi
+
+    # Make sure binary is executable
+    chmod +x "${PALWORLD_SERVER_BINARY}"
+    if [[ -f "${PALWORLD_SERVER_EXECUTABLE}" ]]; then
+        chmod +x "${PALWORLD_SERVER_EXECUTABLE}"
+    fi
+
+    # Build arguments
+    local args
+    args=$(build_server_args)
+
+    log_info "Server arguments: ${args}"
+    log_info "Working directory: ${PALWORLD_SERVER_PATH}"
+
+    # Change to server directory
+    cd "${PALWORLD_SERVER_PATH}"
+
+    # Create PID file directory
+    mkdir -p "$(dirname "${PALWORLD_SERVER_PID}")"
+
+    # Start server in background with log filtering
+    "${PALWORLD_SERVER_BINARY}" ${args} 2>&1 | /opt/palworld/scripts/palworld-logfilter &
+
+    # Wait a moment for the process to start
+    sleep 5
+
+    # Find and save the actual server PID
+    local actual_pid
+    actual_pid=$(pgrep -f "PalServer-Linux-Test" | head -1)
+
+    if [[ -n "${actual_pid}" ]]; then
+        echo "${actual_pid}" > "${PALWORLD_SERVER_PID}"
+        log_success "Server started with PID: ${actual_pid}"
+        return 0
+    else
+        log_error "Failed to start server"
+        return 1
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Stop server
+# -----------------------------------------------------------------------------
+stop_server() {
+    log_info "Stopping Palworld server"
+
+    local pid
+    pid=$(get_server_pid)
+
+    if [[ -z "${pid}" ]]; then
+        log_warn "Server is not running"
+        rm -f "${PALWORLD_SERVER_PID}"
+        return 0
+    fi
+
+    log_info "Sending SIGINT to server (PID: ${pid}) for graceful shutdown"
+
+    # Send SIGINT for graceful shutdown (allows world save)
+    kill -INT "${pid}" 2>/dev/null || true
+
+    # Wait for server to stop (up to 120 seconds for world save)
+    local timeout=120
+    local elapsed=0
+
+    while kill -0 "${pid}" 2>/dev/null; do
+        if [[ ${elapsed} -ge ${timeout} ]]; then
+            log_warn "Server did not stop gracefully, sending SIGKILL"
+            kill -KILL "${pid}" 2>/dev/null || true
+            break
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+
+        # Log progress every 10 seconds
+        if [[ $((elapsed % 10)) -eq 0 ]]; then
+            log_info "Waiting for server to stop... (${elapsed}s/${timeout}s)"
+        fi
+    done
+
+    rm -f "${PALWORLD_SERVER_PID}"
+    log_success "Server stopped"
+}
+
+# -----------------------------------------------------------------------------
+# Restart server
+# -----------------------------------------------------------------------------
+restart_server() {
+    log_info "Restarting Palworld server"
+    stop_server
+    sleep 5
+    start_server
+}
+
+# -----------------------------------------------------------------------------
+# Server status
+# -----------------------------------------------------------------------------
+status_server() {
+    if is_server_running; then
+        local pid
+        pid=$(get_server_pid)
+        log_info "Server is running (PID: ${pid})"
+        return 0
+    else
+        log_info "Server is not running"
+        return 1
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+case "${1:-start}" in
+    start)
+        start_server
+
+        # Keep running to maintain supervisor process
+        # The server may exit periodically (especially during testing without real world data)
+        # We need to keep this script alive so supervisor doesn't think it crashed
+        while true; do
+            sleep 30
+
+            if ! is_server_running; then
+                # Server process not found - check if we should restart
+                new_pid=$(pgrep -f "PalServer-Linux-Test" 2>/dev/null | head -1)
+
+                if [[ -n "${new_pid}" ]]; then
+                    # Process exists, just update PID file
+                    log_info "Server process found with PID: ${new_pid}"
+                    echo "${new_pid}" > "${PALWORLD_SERVER_PID}"
+                else
+                    # Process truly gone - restart it
+                    log_warn "Server process not running, restarting..."
+                    start_server
+
+                    # Wait for startup
+                    sleep 5
+
+                    if ! is_server_running; then
+                        # If still not running after restart, wait and try again
+                        log_warn "Server failed to start, waiting before retry..."
+                        sleep 30
+                    fi
+                fi
+            fi
+        done
+        ;;
+    stop)
+        stop_server
+        ;;
+    restart)
+        restart_server
+        ;;
+    status)
+        status_server
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac

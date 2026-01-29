@@ -1,0 +1,286 @@
+#!/bin/bash
+# =============================================================================
+# Common functions and environment setup for Palworld server scripts
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Color output helpers
+# -----------------------------------------------------------------------------
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
+
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
+
+# -----------------------------------------------------------------------------
+# Path definitions
+# -----------------------------------------------------------------------------
+STEAMCMD_PATH="/opt/steamcmd"
+PALWORLD_SERVER_PATH="/opt/palworld/server"
+PALWORLD_SCRIPTS_PATH="/opt/palworld/scripts"
+CONFIG_PATH="/config"
+SAVES_PATH="${PALWORLD_SERVER_PATH}/Pal/Saved/SaveGames"
+SETTINGS_PATH="${PALWORLD_SERVER_PATH}/Pal/Saved/Config/LinuxServer"
+BACKUPS_PATH="${BACKUPS_DIRECTORY:-${CONFIG_PATH}/backups}"
+LOG_PATH="/var/log/palworld"
+PID_PATH="/var/run/palworld"
+
+PALWORLD_SERVER_PID="${PID_PATH}/palworld-server.pid"
+PALWORLD_APP_ID="2394010"
+
+# -----------------------------------------------------------------------------
+# Server binary path
+# -----------------------------------------------------------------------------
+PALWORLD_SERVER_BINARY="${PALWORLD_SERVER_PATH}/PalServer.sh"
+PALWORLD_SERVER_EXECUTABLE="${PALWORLD_SERVER_PATH}/Pal/Binaries/Linux/PalServer-Linux-Test"
+
+# -----------------------------------------------------------------------------
+# Environment helpers
+# -----------------------------------------------------------------------------
+get_server_port() {
+    echo "${SERVER_PORT:-8211}"
+}
+
+get_server_name() {
+    echo "${SERVER_NAME:-My Palworld Server}"
+}
+
+get_server_description() {
+    echo "${SERVER_DESCRIPTION:-}"
+}
+
+get_server_password() {
+    echo "${SERVER_PASSWORD:-}"
+}
+
+get_admin_password() {
+    echo "${ADMIN_PASSWORD:-}"
+}
+
+get_max_players() {
+    echo "${MAX_PLAYERS:-32}"
+}
+
+is_server_public() {
+    local public="${SERVER_PUBLIC:-true}"
+    [[ "${public,,}" == "true" || "${public}" == "1" ]]
+}
+
+is_rcon_enabled() {
+    local rcon="${RCON_ENABLED:-false}"
+    [[ "${rcon,,}" == "true" || "${rcon}" == "1" ]]
+}
+
+get_rcon_port() {
+    echo "${RCON_PORT:-25575}"
+}
+
+is_update_on_start_enabled() {
+    local update="${UPDATE_ON_START:-true}"
+    [[ "${update,,}" == "true" || "${update}" == "1" ]]
+}
+
+is_backups_enabled() {
+    local backups="${BACKUPS_ENABLED:-true}"
+    [[ "${backups,,}" == "true" || "${backups}" == "1" ]]
+}
+
+# -----------------------------------------------------------------------------
+# Process helpers
+# -----------------------------------------------------------------------------
+is_server_running() {
+    if [[ -f "${PALWORLD_SERVER_PID}" ]]; then
+        local pid
+        pid=$(cat "${PALWORLD_SERVER_PID}")
+        if kill -0 "${pid}" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    # Also check by process name
+    pgrep -f "PalServer-Linux-Test" > /dev/null 2>&1
+}
+
+get_server_pid() {
+    if [[ -f "${PALWORLD_SERVER_PID}" ]]; then
+        cat "${PALWORLD_SERVER_PID}"
+    else
+        pgrep -f "PalServer-Linux-Test" 2>/dev/null | head -1
+    fi
+}
+
+get_player_count() {
+    # Palworld doesn't have a simple way to get player count without RCON
+    # This is a placeholder implementation
+    echo "0"
+}
+
+is_server_idle() {
+    local players
+    players=$(get_player_count)
+    [[ "${players}" == "0" ]]
+}
+
+# -----------------------------------------------------------------------------
+# Permission helpers
+# -----------------------------------------------------------------------------
+setup_permissions() {
+    local uid="${PUID:-1000}"
+    local gid="${PGID:-1000}"
+    local umask_val="${PERMISSIONS_UMASK:-022}"
+
+    log_info "Setting up permissions (UID=${uid}, GID=${gid}, UMASK=${umask_val})"
+
+    # Update palworld user/group IDs if different
+    if [[ "$(id -u palworld)" != "${uid}" ]]; then
+        usermod -u "${uid}" palworld 2>/dev/null || true
+    fi
+    if [[ "$(id -g palworld)" != "${gid}" ]]; then
+        groupmod -g "${gid}" palworld 2>/dev/null || true
+    fi
+
+    # Set ownership
+    chown -R "${uid}:${gid}" /opt/palworld 2>/dev/null || true
+    chown -R "${uid}:${gid}" /config 2>/dev/null || true
+    chown -R "${uid}:${gid}" /var/log/palworld 2>/dev/null || true
+    chown -R "${uid}:${gid}" /var/run/palworld 2>/dev/null || true
+
+    # Set umask
+    umask "${umask_val}"
+}
+
+# -----------------------------------------------------------------------------
+# SteamCMD helpers
+# -----------------------------------------------------------------------------
+run_steamcmd() {
+    local args="$*"
+    log_info "Running SteamCMD: ${args}"
+    "${STEAMCMD_PATH}/steamcmd.sh" ${args}
+}
+
+get_installed_build_id() {
+    local manifest="${PALWORLD_SERVER_PATH}/steamapps/appmanifest_${PALWORLD_APP_ID}.acf"
+    if [[ -f "${manifest}" ]]; then
+        grep -oP '"buildid"\s*"\K[^"]+' "${manifest}" 2>/dev/null || echo "0"
+    else
+        echo "0"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Timezone setup
+# -----------------------------------------------------------------------------
+setup_timezone() {
+    local tz="${TZ:-Etc/UTC}"
+    if [[ -f "/usr/share/zoneinfo/${tz}" ]]; then
+        ln -sf "/usr/share/zoneinfo/${tz}" /etc/localtime
+        echo "${tz}" > /etc/timezone
+        log_info "Timezone set to ${tz}"
+    else
+        log_warn "Invalid timezone: ${tz}, using Etc/UTC"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Wait helpers
+# -----------------------------------------------------------------------------
+wait_for_server_ready() {
+    local timeout="${1:-300}"
+    local elapsed=0
+    local interval=5
+
+    log_info "Waiting for server to be ready (timeout: ${timeout}s)"
+
+    while [[ ${elapsed} -lt ${timeout} ]]; do
+        if is_server_running; then
+            # Check if server is accepting connections by looking for log message
+            if grep -q "Server is ready" "${LOG_PATH}/palworld-server.log" 2>/dev/null; then
+                log_success "Server is ready!"
+                return 0
+            fi
+        fi
+        sleep ${interval}
+        elapsed=$((elapsed + interval))
+    done
+
+    log_error "Server did not become ready within ${timeout}s"
+    return 1
+}
+
+# -----------------------------------------------------------------------------
+# Settings file management
+# -----------------------------------------------------------------------------
+generate_settings_file() {
+    log_info "Generating PalWorldSettings.ini"
+
+    local settings_file="${SETTINGS_PATH}/PalWorldSettings.ini"
+    mkdir -p "${SETTINGS_PATH}"
+
+    # Get boolean values
+    local is_public="True"
+    is_server_public || is_public="False"
+
+    local rcon_enabled="False"
+    is_rcon_enabled && rcon_enabled="True"
+
+    local pvp_enabled="False"
+    [[ "${IS_PVP,,}" == "true" ]] && pvp_enabled="True"
+
+    local player_damage="False"
+    [[ "${ENABLE_PLAYER_TO_PLAYER_DAMAGE,,}" == "true" ]] && player_damage="True"
+
+    local friendly_fire="False"
+    [[ "${ENABLE_FRIENDLY_FIRE,,}" == "true" ]] && friendly_fire="True"
+
+    local invader_enemy="True"
+    [[ "${ENABLE_INVADER_ENEMY,,}" == "false" ]] && invader_enemy="False"
+
+    local aim_assist_pad="True"
+    [[ "${ENABLE_AIM_ASSIST_PAD,,}" == "false" ]] && aim_assist_pad="False"
+
+    local aim_assist_keyboard="False"
+    [[ "${ENABLE_AIM_ASSIST_KEYBOARD,,}" == "true" ]] && aim_assist_keyboard="True"
+
+    local auto_reset_guild="False"
+    [[ "${AUTO_RESET_GUILD_NO_ONLINE_PLAYERS,,}" == "true" ]] && auto_reset_guild="True"
+
+    local non_login_penalty="True"
+    [[ "${ENABLE_NON_LOGIN_PENALTY,,}" == "false" ]] && non_login_penalty="False"
+
+    local fast_travel="True"
+    [[ "${ENABLE_FAST_TRAVEL,,}" == "false" ]] && fast_travel="False"
+
+    local location_select="True"
+    [[ "${IS_START_LOCATION_SELECT_BY_MAP,,}" == "false" ]] && location_select="False"
+
+    local exist_player_logout="False"
+    [[ "${EXIST_PLAYER_AFTER_LOGOUT,,}" == "true" ]] && exist_player_logout="True"
+
+    local defense_other_guild="False"
+    [[ "${ENABLE_DEFENSE_OTHER_GUILD_PLAYER,,}" == "true" ]] && defense_other_guild="True"
+
+    local pickup_death_penalty="False"
+    [[ "${CAN_PICKUP_OTHER_GUILD_DEATH_PENALTY_DROP,,}" == "true" ]] && pickup_death_penalty="True"
+
+    cat > "${settings_file}" << EOF
+[/Script/Pal.PalGameWorldSettings]
+OptionSettings=(Difficulty=${DIFFICULTY:-None},DayTimeSpeedRate=${DAY_TIME_SPEED_RATE:-1.000000},NightTimeSpeedRate=${NIGHT_TIME_SPEED_RATE:-1.000000},ExpRate=${EXP_RATE:-1.000000},PalCaptureRate=${PAL_CAPTURE_RATE:-1.000000},PalSpawnNumRate=${PAL_SPAWN_NUM_RATE:-1.000000},PalDamageRateAttack=${PAL_DAMAGE_RATE_ATTACK:-1.000000},PalDamageRateDefense=${PAL_DAMAGE_RATE_DEFENSE:-1.000000},PlayerDamageRateAttack=${PLAYER_DAMAGE_RATE_ATTACK:-1.000000},PlayerDamageRateDefense=${PLAYER_DAMAGE_RATE_DEFENSE:-1.000000},PlayerStomachDecreaceRate=${PLAYER_STOMACH_DECREASE_RATE:-1.000000},PlayerStaminaDecreaceRate=${PLAYER_STAMINA_DECREASE_RATE:-1.000000},PlayerAutoHPRegeneRate=${PLAYER_AUTO_HP_REGEN_RATE:-1.000000},PlayerAutoHpRegeneRateInSleep=${PLAYER_AUTO_HP_REGEN_RATE_IN_SLEEP:-1.000000},BuildObjectDamageRate=${BUILD_OBJECT_DAMAGE_RATE:-1.000000},BuildObjectDeteriorationDamageRate=${BUILD_OBJECT_DETERIORATION_DAMAGE_RATE:-1.000000},CollectionDropRate=${COLLECTION_DROP_RATE:-1.000000},CollectionObjectHpRate=${COLLECTION_OBJECT_HP_RATE:-1.000000},CollectionObjectRespawnSpeedRate=${COLLECTION_OBJECT_RESPAWN_SPEED_RATE:-1.000000},EnemyDropItemRate=${ENEMY_DROP_ITEM_RATE:-1.000000},DeathPenalty=${DEATH_PENALTY:-All},bEnablePlayerToPlayerDamage=${player_damage},bEnableFriendlyFire=${friendly_fire},bEnableInvaderEnemy=${invader_enemy},bActiveUNKO=${ACTIVE_UNKO:-false},bEnableAimAssistPad=${aim_assist_pad},bEnableAimAssistKeyboard=${aim_assist_keyboard},DropItemMaxNum=${DROP_ITEM_MAX_NUM:-3000},DropItemMaxNum_UNKO=${DROP_ITEM_MAX_NUM_UNKO:-100},BaseCampMaxNum=${BASE_CAMP_MAX_NUM:-128},BaseCampWorkerMaxNum=${BASE_CAMP_WORKER_MAX_NUM:-15},DropItemAliveMaxHours=${DROP_ITEM_ALIVE_MAX_HOURS:-1.000000},bAutoResetGuildNoOnlinePlayers=${auto_reset_guild},AutoResetGuildTimeNoOnlinePlayers=${AUTO_RESET_GUILD_TIME_NO_ONLINE_PLAYERS:-72.000000},GuildPlayerMaxNum=${GUILD_PLAYER_MAX_NUM:-20},PalEggDefaultHatchingTime=${PAL_EGG_DEFAULT_HATCHING_TIME:-72.000000},WorkSpeedRate=${WORK_SPEED_RATE:-1.000000},bIsMultiplay=${IS_MULTIPLAY:-false},bIsPvP=${pvp_enabled},bCanPickupOtherGuildDeathPenaltyDrop=${pickup_death_penalty},bEnableNonLoginPenalty=${non_login_penalty},bEnableFastTravel=${fast_travel},bIsStartLocationSelectByMap=${location_select},bExistPlayerAfterLogout=${exist_player_logout},bEnableDefenseOtherGuildPlayer=${defense_other_guild},CoopPlayerMaxNum=${COOP_PLAYER_MAX_NUM:-4},ServerPlayerMaxNum=${SERVER_PLAYER_MAX_NUM:-32},ServerName="${SERVER_NAME:-My Palworld Server}",ServerDescription="${SERVER_DESCRIPTION:-}",AdminPassword="${ADMIN_PASSWORD:-}",ServerPassword="${SERVER_PASSWORD:-}",PublicPort=${SERVER_PORT:-8211},PublicIP="",RCONEnabled=${rcon_enabled},RCONPort=${RCON_PORT:-25575},Region="",bUseAuth=True,BanListURL="https://api.palworldgame.com/api/banlist.txt")
+EOF
+
+    log_success "PalWorldSettings.ini generated"
+}
