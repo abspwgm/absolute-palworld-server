@@ -86,7 +86,7 @@ test_server_query() {
 
     if [[ ${ports_ok} -eq 1 ]]; then
         # Verify server process is also running
-        if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Test > /dev/null 2>&1; then
+        if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Shipping > /dev/null 2>&1; then
             log_success "Server process is running and ports are bound"
             log_test_pass "${TEST_NAME}"
             return 0
@@ -100,7 +100,7 @@ test_server_query() {
     # Fallback: If ports aren't detected but process is running
     log_warn "Could not detect ports via /proc/net/udp, checking process and logs"
 
-    if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Test > /dev/null 2>&1; then
+    if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Shipping > /dev/null 2>&1; then
         if docker logs palworld-server 2>&1 | grep -q "LogNet:"; then
             log_success "Server process is running and network initialized"
             log_test_pass "${TEST_NAME}"

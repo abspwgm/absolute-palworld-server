@@ -47,14 +47,14 @@ test_restart_update() {
 
     # Verify server is still running after update attempt
     log_info "Verifying server is running after update"
-    if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Test > /dev/null 2>&1; then
+    if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Shipping > /dev/null 2>&1; then
         log_success "Server process is running after update"
     else
         # Server may have been restarted, wait a bit more
         log_info "Server process not found, waiting for restart..."
         sleep 30
 
-        if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Test > /dev/null 2>&1; then
+        if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Shipping > /dev/null 2>&1; then
             log_success "Server process is running after restart"
         else
             log_warn "Server process may still be starting"
@@ -96,7 +96,7 @@ test_restart_update() {
     # Verify server process is running
     attempts=0
     while [[ ${attempts} -lt 60 ]]; do
-        if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Test > /dev/null 2>&1; then
+        if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Shipping > /dev/null 2>&1; then
             log_success "Server process is running after container restart"
             log_test_pass "${TEST_NAME}"
             return 0

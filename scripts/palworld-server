@@ -81,7 +81,7 @@ start_server() {
 
     # Find and save the actual server PID
     local actual_pid
-    actual_pid=$(pgrep -f "PalServer-Linux-Test" | head -1)
+    actual_pid=$(pgrep -f "PalServer-Linux-Shipping" | head -1)
 
     if [[ -n "${actual_pid}" ]]; then
         echo "${actual_pid}" > "${PALWORLD_SERVER_PID}"
@@ -176,7 +176,7 @@ case "${1:-start}" in
 
             if ! is_server_running; then
                 # Server process not found - check if we should restart
-                new_pid=$(pgrep -f "PalServer-Linux-Test" 2>/dev/null | head -1)
+                new_pid=$(pgrep -f "PalServer-Linux-Shipping" 2>/dev/null | head -1)
 
                 if [[ -n "${new_pid}" ]]; then
                     # Process exists, just update PID file

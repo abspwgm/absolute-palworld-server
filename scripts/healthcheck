@@ -7,7 +7,7 @@
 source /opt/palworld/scripts/common 2>/dev/null || true
 
 # Check if server process is running
-if ! pgrep -f "PalServer-Linux-Test" > /dev/null 2>&1; then
+if ! pgrep -f "PalServer-Linux-Shipping" > /dev/null 2>&1; then
     echo "UNHEALTHY: Server process not running"
     exit 1
 fi
@@ -35,5 +35,5 @@ if [[ -f "${LOG_FILE}" ]]; then
 fi
 
 # Basic check passed - process is running
-echo "HEALTHY: Server process is running (PID: $(pgrep -f PalServer-Linux-Test))"
+echo "HEALTHY: Server process is running (PID: $(pgrep -f PalServer-Linux-Shipping))"
 exit 0

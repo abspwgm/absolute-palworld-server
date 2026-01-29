@@ -67,7 +67,7 @@ test_server_start() {
     else
         # Check if server process is at least running
         # Use bash -c to avoid Git Bash path conversion on Windows
-        if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Test > /dev/null 2>&1; then
+        if MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Shipping > /dev/null 2>&1; then
             log_warn "Server process is running but 'LogNet' not found"
             log_warn "This may be normal if server is still initializing"
             # Consider this a pass if the process is running
@@ -80,7 +80,7 @@ test_server_start() {
 
     # Verify server process is running
     log_info "Verifying server process"
-    assert_process_running "palworld-server" "PalServer-Linux-Test"
+    assert_process_running "palworld-server" "PalServer-Linux-Shipping"
 
     log_test_pass "${TEST_NAME}"
     return 0

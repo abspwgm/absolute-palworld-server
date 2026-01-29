@@ -30,7 +30,7 @@ test_graceful_shutdown() {
     sleep 10
 
     # Verify server process is running before shutdown
-    assert_process_running "palworld-server" "PalServer-Linux-Test"
+    assert_process_running "palworld-server" "PalServer-Linux-Shipping"
 
     # Get log line count before shutdown for comparison
     local logs_before
@@ -120,7 +120,7 @@ test_graceful_shutdown() {
 
     # Method 3: Server process is no longer running (even if container is)
     if [[ "${container_running}" == "true" ]]; then
-        if ! MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Test > /dev/null 2>&1; then
+        if ! MSYS_NO_PATHCONV=1 docker exec palworld-server pgrep -f PalServer-Linux-Shipping > /dev/null 2>&1; then
             log_success "Server process stopped (container still running - expected Docker behavior)"
             shutdown_verified=true
         fi

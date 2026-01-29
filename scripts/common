@@ -48,7 +48,7 @@ PALWORLD_APP_ID="2394010"
 # Server binary path
 # -----------------------------------------------------------------------------
 PALWORLD_SERVER_BINARY="${PALWORLD_SERVER_PATH}/PalServer.sh"
-PALWORLD_SERVER_EXECUTABLE="${PALWORLD_SERVER_PATH}/Pal/Binaries/Linux/PalServer-Linux-Test"
+PALWORLD_SERVER_EXECUTABLE="${PALWORLD_SERVER_PATH}/Pal/Binaries/Linux/PalServer-Linux-Shipping"
 
 # -----------------------------------------------------------------------------
 # Environment helpers
@@ -113,14 +113,14 @@ is_server_running() {
         fi
     fi
     # Also check by process name
-    pgrep -f "PalServer-Linux-Test" > /dev/null 2>&1
+    pgrep -f "PalServer-Linux-Shipping" > /dev/null 2>&1
 }
 
 get_server_pid() {
     if [[ -f "${PALWORLD_SERVER_PID}" ]]; then
         cat "${PALWORLD_SERVER_PID}"
     else
-        pgrep -f "PalServer-Linux-Test" 2>/dev/null | head -1
+        pgrep -f "PalServer-Linux-Shipping" 2>/dev/null | head -1
     fi
 }
 

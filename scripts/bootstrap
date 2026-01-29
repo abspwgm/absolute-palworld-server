@@ -100,6 +100,15 @@ fi
 log_success "Server binary found: ${PALWORLD_SERVER_BINARY}"
 
 # -----------------------------------------------------------------------------
+# Fix server file permissions
+# -----------------------------------------------------------------------------
+# The server files are downloaded as root but need to be accessible by the
+# palworld user (since the server refuses to run as root)
+log_info "Setting server file permissions for palworld user"
+chown -R palworld:palworld "${PALWORLD_SERVER_PATH}" 2>/dev/null || true
+chmod -R u+rwX "${PALWORLD_SERVER_PATH}" 2>/dev/null || true
+
+# -----------------------------------------------------------------------------
 # Generate settings file
 # -----------------------------------------------------------------------------
 generate_settings_file
