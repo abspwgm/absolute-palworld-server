@@ -203,7 +203,9 @@ services:
     ports:
       - "8211:8211/udp"
       - "27015:27015/udp"
-      - "25575:25575/tcp"
+      # RCON is an admin port: bound to localhost so it is never reachable
+      # from the network. Do not forward it on your router.
+      - "127.0.0.1:25575:25575/tcp"
 
     # =========================================================================
     # STORAGE CONFIGURATION
