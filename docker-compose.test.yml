@@ -23,7 +23,15 @@ services:
       - SERVER_DESCRIPTION=E2E Test Server
       - SERVER_PASSWORD=testpass123
       - ADMIN_PASSWORD=admintest123
-      - SERVER_PUBLIC=false
+      # The A2S responder is part of Steam registration, and a server with
+      # bIsPublic=False does not register - so the query port never answers and
+      # the idle guard cannot be exercised at all. This is the one setting the
+      # suite needs different from a private server's defaults.
+      #
+      # Advertising an ephemeral CI server costs nothing: it is behind NAT on a
+      # hosted runner and behind an isolated VLAN with no inbound rule on the
+      # self-hosted pool, so nothing can reach it either way.
+      - SERVER_PUBLIC=true
       - MAX_PLAYERS=4
       - SERVER_ARGS=
 
