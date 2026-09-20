@@ -141,7 +141,7 @@ All configuration is done through environment variables in `docker-compose.yml`.
 |------|----------|-------------|
 | 8211 | UDP | Game traffic |
 | 27015 | UDP | Steam server queries |
-| 25575 | TCP | RCON (if enabled) |
+| 25575 | TCP | RCON (if enabled). Admin port: keep it private, `docker-compose.yml` binds it to 127.0.0.1 |
 
 ## Volumes
 
