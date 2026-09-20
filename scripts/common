@@ -31,14 +31,15 @@ log_error() {
 # -----------------------------------------------------------------------------
 # Path definitions
 # -----------------------------------------------------------------------------
-STEAMCMD_PATH="/opt/steamcmd"
-PALWORLD_SERVER_PATH="/opt/palworld/server"
-PALWORLD_SCRIPTS_PATH="/opt/palworld/scripts"
+# Overridable so the scripts can be unit tested outside the container.
+STEAMCMD_PATH="${STEAMCMD_PATH:-/opt/steamcmd}"
+PALWORLD_SERVER_PATH="${PALWORLD_SERVER_PATH:-/opt/palworld/server}"
+PALWORLD_SCRIPTS_PATH="${PALWORLD_SCRIPTS_PATH:-/opt/palworld/scripts}"
 CONFIG_PATH="/config"
 SAVES_PATH="${PALWORLD_SERVER_PATH}/Pal/Saved/SaveGames"
 SETTINGS_PATH="${PALWORLD_SERVER_PATH}/Pal/Saved/Config/LinuxServer"
 BACKUPS_PATH="${BACKUPS_DIRECTORY:-${CONFIG_PATH}/backups}"
-LOG_PATH="/var/log/palworld"
+LOG_PATH="${LOG_PATH:-/var/log/palworld}"
 PID_PATH="/var/run/palworld"
 
 PALWORLD_SERVER_PID="${PID_PATH}/palworld-server.pid"
