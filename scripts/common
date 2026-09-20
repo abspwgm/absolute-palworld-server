@@ -31,17 +31,19 @@ log_error() {
 # -----------------------------------------------------------------------------
 # Path definitions
 # -----------------------------------------------------------------------------
-# The in-image layout is fixed. TEST_ROOT is empty in every container and
-# exists only so the unit tests can exercise these scripts outside one.
+# The in-image layout is fixed. TEST_ROOT prefixes it so the unit tests can
+# exercise these scripts outside a container; it is empty in every container.
+# Each path also stays individually overridable for tests that point one
+# somewhere unrelated to a TEST_ROOT tree.
 TEST_ROOT="${TEST_ROOT:-}"
-STEAMCMD_PATH="${TEST_ROOT}/opt/steamcmd"
-PALWORLD_SERVER_PATH="${TEST_ROOT}/opt/palworld/server"
-PALWORLD_SCRIPTS_PATH="${TEST_ROOT}/opt/palworld/scripts"
-CONFIG_PATH="${TEST_ROOT}/config"
+STEAMCMD_PATH="${STEAMCMD_PATH:-${TEST_ROOT}/opt/steamcmd}"
+PALWORLD_SERVER_PATH="${PALWORLD_SERVER_PATH:-${TEST_ROOT}/opt/palworld/server}"
+PALWORLD_SCRIPTS_PATH="${PALWORLD_SCRIPTS_PATH:-${TEST_ROOT}/opt/palworld/scripts}"
+CONFIG_PATH="${CONFIG_PATH:-${TEST_ROOT}/config}"
 SAVES_PATH="${PALWORLD_SERVER_PATH}/Pal/Saved/SaveGames"
 SETTINGS_PATH="${PALWORLD_SERVER_PATH}/Pal/Saved/Config/LinuxServer"
 BACKUPS_PATH="${BACKUPS_DIRECTORY:-${CONFIG_PATH}/backups}"
-LOG_PATH="/var/log/palworld"
+LOG_PATH="${LOG_PATH:-/var/log/palworld}"
 PID_PATH="/var/run/palworld"
 
 PALWORLD_SERVER_PID="${PID_PATH}/palworld-server.pid"

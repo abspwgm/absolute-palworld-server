@@ -106,6 +106,7 @@ All configuration is done through environment variables in `docker-compose.yml`.
 |----------|---------|-------------|
 | `UPDATE_ON_START` | true | Update server on start |
 | `UPDATE_TIMEOUT` | 900 | Update timeout (seconds) |
+| `STEAMCMD_RETRIES` | 3 | Download attempts per update. SteamCMD's first download on a fresh container sometimes fails with "Missing configuration"; a retry clears it |
 | `UPDATE_CRON` | (empty) | Cron schedule for updates |
 | `UPDATE_IF_IDLE` | true | Only update when empty |
 

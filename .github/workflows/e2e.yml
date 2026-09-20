@@ -49,6 +49,9 @@ jobs:
       - name: Admin password unit test
         run: bash tests/test_admin_password.sh
 
+      - name: Updater retry unit test
+        run: bash tests/test_updater_retry.sh
+
   e2e-tests:
     name: End-to-End Tests
     runs-on: ubuntu-latest
