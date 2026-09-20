@@ -54,6 +54,8 @@ test_idle_guard() {
 
     if [[ ${ready} -ne 1 ]]; then
         log_error "The query port never answered in ${waited}s after the restart"
+        log_error "If SERVER_PUBLIC is false the server does not register with"
+        log_error "Steam, and the A2S responder never runs - check the compose file."
         log_error "=== container state ==="
         docker ps -a --filter name="${CONTAINER}" --format '{{.Status}}' 2>&1 || true
         docker logs "${CONTAINER}" --tail 40 2>&1 || true
