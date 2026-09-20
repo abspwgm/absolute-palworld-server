@@ -31,10 +31,13 @@ log_error() {
 # -----------------------------------------------------------------------------
 # Path definitions
 # -----------------------------------------------------------------------------
-STEAMCMD_PATH="/opt/steamcmd"
-PALWORLD_SERVER_PATH="/opt/palworld/server"
-PALWORLD_SCRIPTS_PATH="/opt/palworld/scripts"
-CONFIG_PATH="/config"
+# The in-image layout is fixed. TEST_ROOT is empty in every container and
+# exists only so the unit tests can exercise these scripts outside one.
+TEST_ROOT="${TEST_ROOT:-}"
+STEAMCMD_PATH="${TEST_ROOT}/opt/steamcmd"
+PALWORLD_SERVER_PATH="${TEST_ROOT}/opt/palworld/server"
+PALWORLD_SCRIPTS_PATH="${TEST_ROOT}/opt/palworld/scripts"
+CONFIG_PATH="${TEST_ROOT}/config"
 SAVES_PATH="${PALWORLD_SERVER_PATH}/Pal/Saved/SaveGames"
 SETTINGS_PATH="${PALWORLD_SERVER_PATH}/Pal/Saved/Config/LinuxServer"
 BACKUPS_PATH="${BACKUPS_DIRECTORY:-${CONFIG_PATH}/backups}"
@@ -85,6 +88,80 @@ is_server_public() {
 is_rcon_enabled() {
     local rcon="${RCON_ENABLED:-false}"
     [[ "${rcon,,}" == "true" || "${rcon}" == "1" ]]
+}
+
+# -----------------------------------------------------------------------------
+# Admin password
+# -----------------------------------------------------------------------------
+# RCON authenticates with AdminPassword, so an empty or well-known one is a
+# remote console open to anyone who can reach the port.
+ADMIN_PASSWORD_FILE="${CONFIG_PATH}/admin_password"
+ADMIN_PASSWORD_DENYLIST=("changeme" "password" "your_secure_password" "admin" "adminpassword" "rcon")
+
+is_default_admin_password() {
+    local candidate="${1,,}"
+    local denied
+
+    if [[ -z "${candidate}" ]]; then
+        return 0
+    fi
+    for denied in "${ADMIN_PASSWORD_DENYLIST[@]}"; do
+        if [[ "${candidate}" == "${denied}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Decides the admin password and stores it in the global ADMIN_PASSWORD.
+# An empty or known-default password is replaced by a random one saved to
+# ${ADMIN_PASSWORD_FILE}; the value itself is never logged.
+# Note: this logs to stdout, so never call it via $(...) - read ADMIN_PASSWORD
+resolve_admin_password() {
+    if ! is_rcon_enabled; then
+        return 0
+    fi
+
+    # User-supplied password: use unchanged
+    if ! is_default_admin_password "${ADMIN_PASSWORD}"; then
+        return 0
+    fi
+
+    # Reuse the password generated on a previous start
+    local stored=""
+    if [[ -r "${ADMIN_PASSWORD_FILE}" ]]; then
+        stored=$(tr -d '\r\n' < "${ADMIN_PASSWORD_FILE}")
+    fi
+    if [[ ${#stored} -ge 24 ]]; then
+        ADMIN_PASSWORD="${stored}"
+        log_info "Using generated admin password from ${ADMIN_PASSWORD_FILE}"
+        return 0
+    fi
+
+    log_warn "ADMIN_PASSWORD is empty or a known default, generating a random one"
+
+    # Alphanumeric only, so it is safe inside the settings file
+    local generated
+    generated=$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
+    if [[ ${#generated} -lt 24 ]]; then
+        log_error "Failed to generate an admin password, disabling RCON"
+        RCON_ENABLED=false
+        return 1
+    fi
+
+    # Write with mode 600, owned by the server user
+    if ! (umask 077 && echo "${generated}" > "${ADMIN_PASSWORD_FILE}"); then
+        log_error "Failed to write ${ADMIN_PASSWORD_FILE}, disabling RCON"
+        RCON_ENABLED=false
+        return 1
+    fi
+    chmod 600 "${ADMIN_PASSWORD_FILE}"
+    chown palworld:palworld "${ADMIN_PASSWORD_FILE}" 2>/dev/null || true
+
+    ADMIN_PASSWORD="${generated}"
+    log_success "Generated admin password saved to ${ADMIN_PASSWORD_FILE}"
+    log_info "Read it with: docker exec <container> cat ${ADMIN_PASSWORD_FILE}"
+    return 0
 }
 
 get_rcon_port() {

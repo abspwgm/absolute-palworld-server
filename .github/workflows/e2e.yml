@@ -46,6 +46,9 @@ jobs:
           shellcheck --version
           shellcheck -S error -s bash -x scripts/* tests/*.sh tests/e2e/*.sh
 
+      - name: Admin password unit test
+        run: bash tests/test_admin_password.sh
+
   e2e-tests:
     name: End-to-End Tests
     runs-on: ubuntu-latest

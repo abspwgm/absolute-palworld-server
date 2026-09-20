@@ -109,6 +109,14 @@ chown -R palworld:palworld "${PALWORLD_SERVER_PATH}" 2>/dev/null || true
 chmod -R u+rwX "${PALWORLD_SERVER_PATH}" 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
+# Resolve the admin password before it is written into the settings file
+# -----------------------------------------------------------------------------
+# RCON authenticates with AdminPassword. An empty or well-known one would be a
+# remote console open to anyone who can reach the port, so it is replaced by a
+# generated password stored in ${ADMIN_PASSWORD_FILE}.
+resolve_admin_password
+
+# -----------------------------------------------------------------------------
 # Generate settings file
 # -----------------------------------------------------------------------------
 generate_settings_file

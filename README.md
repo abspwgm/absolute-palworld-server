@@ -36,7 +36,7 @@ services:
     environment:
       - SERVER_NAME=My Palworld Server
       - SERVER_PASSWORD=mypassword
-      - ADMIN_PASSWORD=adminpass
+      - ADMIN_PASSWORD=            # left empty: one is generated for you
       - MAX_PLAYERS=32
     ports:
       - "8211:8211/udp"
@@ -81,7 +81,7 @@ All configuration is done through environment variables in `docker-compose.yml`.
 | `SERVER_PORT` | 8211 | Game port (UDP) |
 | `SERVER_DESCRIPTION` | (empty) | Server description |
 | `SERVER_PASSWORD` | (empty) | Server password |
-| `ADMIN_PASSWORD` | (empty) | Admin/RCON password |
+| `ADMIN_PASSWORD` | (generated) | Admin/RCON password. Left empty or set to a known default, a random one is generated and saved to `/config/admin_password` |
 | `SERVER_PUBLIC` | true | List in server browser |
 | `MAX_PLAYERS` | 32 | Maximum players |
 
