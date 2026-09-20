@@ -62,6 +62,12 @@ get_server_port() {
     echo "${SERVER_PORT:-8211}"
 }
 
+# The Steam query port. A2S_INFO is answered here, and palworld-server passes
+# the same value to the server as -queryport, so the two cannot drift.
+get_query_port() {
+    echo "${QUERY_PORT:-27015}"
+}
+
 get_server_name() {
     echo "${SERVER_NAME:-My Palworld Server}"
 }
@@ -203,15 +209,37 @@ get_server_pid() {
     fi
 }
 
+# Number of players connected, from a Steam A2S_INFO query.
+#
+# This was a stub that always echoed 0, so is_server_idle was always true and
+# UPDATE_IF_IDLE / BACKUPS_IF_IDLE did nothing: a scheduled update would restart
+# the server on top of connected players (#4). Palworld exposes no parseable log
+# line for connections, and its only other source is RCON, which is disabled by
+# default -- so the Steam query port is the one source every operator has.
+#
+# Prints the count and returns 0 when the server answered. Returns non-zero and
+# prints nothing when the count could not be determined, so callers can tell
+# "nobody is connected" apart from "we could not find out".
 get_player_count() {
-    # Palworld doesn't have a simple way to get player count without RCON
-    # This is a placeholder implementation
-    echo "0"
+    "${PALWORLD_SCRIPTS_PATH}/a2s-player-count" \
+        127.0.0.1 "$(get_query_port)" "${A2S_TIMEOUT:-3}" 2>/dev/null
 }
 
 is_server_idle() {
     local players
-    players=$(get_player_count)
+
+    if ! players="$(get_player_count)"; then
+        # Fail closed. If the server is up but will not answer a query, we
+        # cannot prove nobody is connected, and the promise this guard exists to
+        # keep is that an update never lands on a live session.
+        if is_server_running; then
+            log_warn "Could not read the player count from the query port; assuming players are connected"
+            return 1
+        fi
+        # No server running means nobody is connected.
+        return 0
+    fi
+
     [[ "${players}" == "0" ]]
 }
 

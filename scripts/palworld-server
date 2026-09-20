@@ -21,9 +21,8 @@ build_server_args() {
     # Server port
     args="${args} -port=$(get_server_port)"
 
-    # Query port (usually port + 1 for Steam queries)
-    local query_port=$(($(get_server_port) + 16804))
-    args="${args} -queryport=27015"
+    # Query port. Must match get_query_port: the idle guard queries A2S there.
+    args="${args} -queryport=$(get_query_port)"
 
     # Additional custom arguments
     if [[ -n "${SERVER_ARGS}" ]]; then

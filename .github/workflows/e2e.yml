@@ -44,13 +44,23 @@ jobs:
       - name: Shellcheck container scripts and tests
         run: |
           shellcheck --version
-          shellcheck -S error -s bash -x scripts/* tests/*.sh tests/e2e/*.sh
+          # Pick targets by shebang: scripts/ now also holds a Python helper,
+          # and new scripts get linted without editing this list.
+          mapfile -t targets < <(grep -rlE '^#!/(usr/)?bin/(env +)?(bash|sh)\b' scripts tests | sort)
+          printf 'shellcheck: %s\n' "${targets[@]}"
+          shellcheck -S error -s bash -x "${targets[@]}"
 
-      - name: Admin password unit test
-        run: bash tests/test_admin_password.sh
+      - name: Byte-compile the Python helper
+        run: python3 -m py_compile scripts/a2s-player-count
 
-      - name: Updater retry unit test
-        run: bash tests/test_updater_retry.sh
+      - name: Unit tests (no Docker)
+        run: |
+          # tests/test_helpers.sh is the shared e2e library, not a test.
+          for t in tests/test_*.sh; do
+            case "$(basename "${t}")" in test_helpers.sh) continue ;; esac
+            echo "--- ${t}"
+            bash "${t}"
+          done
 
   e2e-tests:
     name: End-to-End Tests

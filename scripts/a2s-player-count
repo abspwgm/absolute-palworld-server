@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+"""Print the number of players connected, via a Steam A2S_INFO query.
+
+Palworld exposes no log line and no API for this without RCON, which is
+disabled by default, so the Steam query port is the only source available to
+every operator. A2S_INFO is the standard protocol Valve servers answer and
+Steam's own server browser uses.
+
+Usage: a2s-player-count <host> <port> [timeout_seconds]
+
+Prints the player count on stdout and exits 0. On any failure -- no reply,
+truncated reply, unexpected header -- it prints nothing and exits non-zero, so
+the caller can tell "nobody is connected" apart from "we could not find out".
+"""
+
+import socket
+import struct
+import sys
+
+HEADER = b"\xff\xff\xff\xff"
+A2S_INFO = HEADER + b"TSource Engine Query\x00"
+# Reply headers: 'I' = server info, 'A' = challenge we must echo back.
+REPLY_INFO = 0x49
+REPLY_CHALLENGE = 0x41
+
+
+def _read_cstring(data, offset):
+    """Return (value, next_offset) for a NUL-terminated string."""
+    end = data.index(b"\x00", offset)
+    return data[offset:end], end + 1
+
+
+def _parse_player_count(payload):
+    """Pull the player count out of an A2S_INFO reply body."""
+    if len(payload) < 5 or payload[4] != REPLY_INFO:
+        raise ValueError("not an A2S_INFO reply")
+
+    offset = 6  # 4 header bytes, the 'I' byte, then the protocol byte.
+    for _ in range(4):  # name, map, folder, game
+        _, offset = _read_cstring(payload, offset)
+
+    offset += 2  # Steam application id
+    (players,) = struct.unpack_from("<B", payload, offset)
+    return players
+
+
+def query(host, port, timeout):
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.settimeout(timeout)
+        sock.sendto(A2S_INFO, (host, port))
+        payload = sock.recv(4096)
+
+        # Most current servers, Palworld included, answer the first request
+        # with a challenge that has to be appended and the query repeated.
+        if len(payload) >= 5 and payload[4] == REPLY_CHALLENGE:
+            sock.sendto(A2S_INFO + payload[5:9], (host, port))
+            payload = sock.recv(4096)
+
+        return _parse_player_count(payload)
+
+
+def main(argv):
+    if not 3 <= len(argv) <= 4:
+        print(__doc__, file=sys.stderr)
+        return 2
+
+    host = argv[1]
+    try:
+        port = int(argv[2])
+        timeout = float(argv[3]) if len(argv) == 4 else 3.0
+    except ValueError:
+        print("port must be an integer and timeout a number", file=sys.stderr)
+        return 2
+
+    try:
+        print(query(host, port, timeout))
+    except (OSError, ValueError, struct.error, IndexError) as exc:
+        print(f"A2S query to {host}:{port} failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

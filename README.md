@@ -108,7 +108,8 @@ All configuration is done through environment variables in `docker-compose.yml`.
 | `UPDATE_TIMEOUT` | 900 | Update timeout (seconds) |
 | `STEAMCMD_RETRIES` | 3 | Download attempts per update. SteamCMD's first download on a fresh container sometimes fails with "Missing configuration"; a retry clears it |
 | `UPDATE_CRON` | (empty) | Cron schedule for updates |
-| `UPDATE_IF_IDLE` | true | Only update when empty |
+| `UPDATE_IF_IDLE` | true | Only update when no players are connected. The count comes from a Steam A2S query on the query port; if that query gets no answer while the server is up, the update is skipped rather than risked |
+| `QUERY_PORT` | 27015 | Steam query port. The server is told to use it, and the idle check above queries it |
 
 ### Backup Settings
 
@@ -120,6 +121,7 @@ All configuration is done through environment variables in `docker-compose.yml`.
 | `BACKUPS_MAX_AGE` | 3 | Delete backups older than X days |
 | `BACKUPS_MAX_COUNT` | 0 | Max backups (0 = unlimited) |
 | `BACKUPS_ZIP` | true | Compress backups |
+| `BACKUPS_IF_IDLE` | false | When true, skip a scheduled backup while players are connected, counted the same way as `UPDATE_IF_IDLE` |
 
 ### RCON Settings
 

@@ -302,6 +302,7 @@ ALL_TESTS=(
     "backup"
     "graceful_shutdown"
     "restart_update"
+    "idle_guard"
 )
 
 run_all_tests() {
