@@ -31,7 +31,7 @@ A production-ready Docker container for hosting Palworld dedicated servers with 
 ```yaml
 services:
   palworld:
-    image: ghcr.io/fireaimready/absolute-palworld-server:latest
+    image: ghcr.io/abspwgm/absolute-palworld-server:latest
     container_name: palworld-server
     environment:
       - SERVER_NAME=My Palworld Server
@@ -167,7 +167,7 @@ docker exec palworld-server /opt/palworld/scripts/palworld-updater --force
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/fireaimready/absolute-palworld-server.git
+git clone https://github.com/abspwgm/absolute-palworld-server.git
 cd absolute-palworld-server
 ```
 
@@ -220,4 +220,4 @@ Contributions are welcome! Please open an issue or pull request.
 ## Acknowledgments
 
 - [Palworld](https://www.pocketpair.jp/palworld) by Pocket Pair
-- Inspired by [absolute-valheim-server](https://github.com/fireaimready/absolute-valheim-server)
+- Inspired by [absolute-valheim-server](https://github.com/abspwgm/absolute-valheim-server)
