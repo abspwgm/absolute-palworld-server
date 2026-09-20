@@ -1,5 +1,11 @@
 # Absolute Palworld Server
 
+[![E2E Tests](https://github.com/abspwgm/absolute-palworld-server/actions/workflows/e2e.yml/badge.svg)](https://github.com/abspwgm/absolute-palworld-server/actions/workflows/e2e.yml)
+[![Docker Image](https://github.com/abspwgm/absolute-palworld-server/actions/workflows/publish.yml/badge.svg)](https://github.com/abspwgm/absolute-palworld-server/actions/workflows/publish.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+New to hosting? Start with the [step-by-step install guide](docs/INSTALL.md).
+
 A production-ready Docker container for hosting Palworld dedicated servers with automatic updates, backups, and comprehensive configuration options.
 
 ## Features
