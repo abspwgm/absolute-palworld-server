@@ -29,6 +29,31 @@ test_idle_guard() {
 
     assert_container_running "${CONTAINER}"
 
+    # This test runs straight after restart_update, which restarts the
+    # container. Every other test waits for the server to come up before
+    # asserting anything; this one went straight to a 3 second A2S query and
+    # was hitting a server about eight seconds into booting, so the query timed
+    # out and the empty result looked like a broken implementation.
+    log_info "Waiting for the server to finish starting after the restart"
+    if ! wait_for_log "${CONTAINER}" "LogNet:" 300; then
+        log_error "Server did not become ready within 300s"
+        docker logs "${CONTAINER}" --tail 30 2>&1 || true
+        log_test_fail "${TEST_NAME}"
+        return 1
+    fi
+
+    # The query socket can be bound a moment before the server answers on it,
+    # so give the responder a few attempts rather than judging it on one.
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if docker exec "${CONTAINER}" bash -c \
+            'source /opt/palworld/scripts/common && get_player_count' >/dev/null 2>&1; then
+            break
+        fi
+        log_info "A2S responder not answering yet (attempt ${attempt}/5)"
+        sleep 5
+    done
+
     # --- a real A2S query against the real server -------------------------
     # The stub this replaces always answered 0 without asking anything (#4), so
     # the point here is that a genuine query succeeds inside the image.
