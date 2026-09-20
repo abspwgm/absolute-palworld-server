@@ -156,6 +156,34 @@ All configuration is done through environment variables in `docker-compose.yml`.
 docker exec palworld-server /opt/palworld/scripts/palworld-backup --force
 ```
 
+## Restoring a Backup
+
+Backups are written to `BACKUPS_DIRECTORY` (`/config/backups`, inside the `palworld-config` volume) as `palworld_YYYYMMDD_HHMMSS.zip`, or `.tar.gz` when `BACKUPS_ZIP=false`. Each archive holds one `palworld_<timestamp>/` folder containing `SaveGames/` (the world) and `Config/` (the generated settings). The live saves are in `/opt/palworld/server/Pal/Saved/SaveGames`.
+
+`PalWorldSettings.ini` is regenerated from the environment variables on every start, so only `SaveGames/` needs restoring.
+
+```bash
+# 1. Stop the server so it cannot overwrite the restored files
+docker compose stop
+
+# 2. List the available backups
+docker compose run --rm --entrypoint bash palworld -c 'ls -1 /config/backups'
+
+# 3. Restore one (set B to the backup name without the extension)
+docker compose run --rm --entrypoint bash palworld -c '
+  set -e
+  B=palworld_20250101_120000
+  SAVED=/opt/palworld/server/Pal/Saved
+  cd /tmp && unzip -q "/config/backups/${B}.zip"
+  mv "${SAVED}/SaveGames" "${SAVED}/SaveGames.before-restore"
+  cp -r "/tmp/${B}/SaveGames" "${SAVED}/SaveGames"'
+
+# 4. Start the server again
+docker compose up -d
+```
+
+For a `.tar.gz` backup, replace the `unzip` line with `tar -xzf "/config/backups/${B}.tar.gz"`. The previous world is kept as `SaveGames.before-restore`; delete it once you are happy with the result.
+
 ## Manual Update
 
 ```bash
