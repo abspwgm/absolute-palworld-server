@@ -28,6 +28,24 @@ env:
   PALWORLD_APP_ID: '2394010'
 
 jobs:
+  # -------------------------------------------------------------------------
+  # Static checks (fast, no Docker)
+  # -------------------------------------------------------------------------
+  lint:
+    name: Lint (shellcheck)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # shellcheck is preinstalled on ubuntu-latest
+      - name: Shellcheck container scripts and tests
+        run: |
+          shellcheck --version
+          shellcheck -S error -s bash -x scripts/* tests/*.sh tests/e2e/*.sh
+
   e2e-tests:
     name: End-to-End Tests
     runs-on: ubuntu-latest
