@@ -46,7 +46,10 @@ jobs:
           shellcheck --version
           shellcheck -S error -s bash -x scripts/* tests/*.sh tests/e2e/*.sh
 
-      - name: Run unit tests (no Docker needed)
+      - name: Admin password unit test
+        run: bash tests/test_admin_password.sh
+
+      - name: Updater retry unit test
         run: bash tests/test_updater_retry.sh
 
   e2e-tests:

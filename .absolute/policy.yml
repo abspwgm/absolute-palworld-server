@@ -1,0 +1,178 @@
+# Local policy for absolute-palworld-server.
+# Checked on every push against https://github.com/abspwgm/.github
+project: absolute-palworld-server
+standard_version: "1.0.0"
+
+audience: >-
+  someone who has never used Docker, a terminal or a router's settings page, and
+  wants a Palworld server their friends can join tonight
+
+contract:
+  - The environment variables documented in the README and docs/INSTALL.md
+  - The published tags: latest, <semver>, sha-<sha>
+  - The volume layout /config and /opt/palworld/server
+  - The generated admin password at /config/admin_password
+  - The port split in docs/INSTALL.md: 8211/udp public, RCON private
+
+tiers:
+  fast:
+    gates: push
+    command: shellcheck -S error -s bash -x scripts/* tests/*.sh tests/e2e/*.sh && bash tests/test_admin_password.sh
+    budget: under a minute
+  merge:
+    gates: merge
+    command: bash tests/run_e2e.sh
+    budget: around 25 minutes
+  release:
+    gates: release
+    command: bash tests/run_e2e.sh
+    budget: as long as it takes
+
+build:
+  base_images:
+    - catalog_id: debian-bookworm-slim
+      used_in: Dockerfile
+      reason: >-
+        SteamCMD is a 32-bit binary and needs glibc with multiarch, which no
+        hardened entry in the library has yet been proven to provide.
+
+security:
+  layers:
+    L1:
+      requirements:
+        default_branch_protected:
+          status: met
+          verified_by: https://github.com/abspwgm/absolute-game-servers/blob/main/governance/rulesets/default-branch.json
+          reason: Applied as a repository ruleset from the governance definitions in the hub repository.
+        required_checks_declared:
+          status: met
+          verified_by: https://github.com/abspwgm/absolute-game-servers/blob/main/governance/required-checks.json
+          reason: The required check list is declared with the rulesets in the hub repository.
+        secret_scanning_enabled:
+          status: met
+          verified_by: https://github.com/abspwgm/absolute-palworld-server/settings/security_analysis
+          reason: Secret scanning and push protection are repository settings.
+        no_secrets_in_repository: .github/workflows/conformance.yml
+        no_deployment_detail_in_public: SECURITY.md
+        licence_declared: LICENSE
+    L2:
+      requirements:
+        inputs_pinned_immutably: Dockerfile
+        pins_verified_before_use:
+          status: not_applicable
+          reason: >-
+            Nothing is downloaded at build time beyond Debian packages and
+            SteamCMD from Valve. There is no mod loader or third-party archive
+            to pin; the game itself is fetched at run time by SteamCMD.
+        unpinned_input_refused:
+          status: not_applicable
+          reason: Same as above; there is no pinned third-party archive in this image.
+        pins_move_by_pr:
+          status: met
+          verified_by: https://github.com/abspwgm/absolute-game-servers/blob/main/governance/rulesets/default-branch.json
+          reason: The branch ruleset blocks direct pushes, so the base image digest moves only through a reviewed PR.
+        vulnerable_dependencies_block_release:
+          status: exception
+          exception: no-vulnerability-gate
+    L3:
+      requirements:
+        base_image_from_approved_library: Dockerfile
+        least_privilege_tokens: .github/workflows/publish.yml
+        no_secrets_in_build_args: Dockerfile
+        ephemeral_runners: .github/workflows/e2e.yml
+        fork_pr_cannot_publish: .github/workflows/publish.yml
+    L4:
+      requirements:
+        provenance_and_sbom_attached: .github/workflows/publish.yml
+        only_distributable_content:
+          status: exception
+          exception: steamcmd-baked-in
+        published_only_after_merge_tier: .github/workflows/publish.yml
+    L5:
+      requirements:
+        least_privilege_runtime: config/supervisord.conf
+        admin_interfaces_private: docker-compose.yml
+        default_credentials_refused: tests/test_admin_password.sh
+        fail_closed_on_state_destroying_paths:
+          status: exception
+          exception: no-update-verification
+        honest_health_reporting: scripts/healthcheck
+      controls:
+        - id: server-runs-unprivileged
+          description: >-
+            supervisord starts the server as the palworld user, not root. The
+            game server refuses to run as root, and the image does not work
+            around that.
+          verified_by: config/supervisord.conf
+        - id: admin-password-generated
+          description: >-
+            RCON refuses an empty or denylisted ADMIN_PASSWORD, generates a
+            32-character one, stores it 0600 at /config/admin_password, reuses
+            it across restarts and never logs its value.
+          verified_by: tests/test_admin_password.sh
+        - id: rcon-bound-privately
+          description: The shipped compose file binds RCON to 127.0.0.1 and documents it as an admin port.
+          verified_by: docker-compose.yml
+    L6:
+      requirements:
+        snapshot_before_risk:
+          status: exception
+          exception: no-disaster-response
+        hold_on_failed_verification:
+          status: exception
+          exception: no-disaster-response
+        restore_rehearsed_in_ci:
+          status: exception
+          exception: no-disaster-response
+        retention_exercised_by_test: tests/e2e/test_backup.sh
+      controls:
+        - id: backup-retention-tested
+          description: >-
+            Backups prune to the configured count, and the e2e suite proves the
+            oldest ones actually age out rather than trusting the setting.
+          verified_by: tests/e2e/test_backup.sh
+    L7:
+      requirements:
+        scheduled_canary:
+          status: exception
+          exception: no-build-watch
+        one_issue_per_failure_class:
+          status: exception
+          exception: no-build-watch
+        security_policy_published: SECURITY.md
+        findings_kept_private: SECURITY.md
+
+exceptions:
+  - id: no-disaster-response
+    reason: >-
+      This image has backups with tested retention, but no snapshot, hold or
+      rollback: a Steam update that breaks the server cannot be held or undone,
+      the way valheim-dr does it for Valheim. Writing a third copy of that logic
+      here is what the shared base image exists to prevent, so it lands with the
+      base rather than being duplicated now.
+    expires: "2027-03-31"
+  - id: no-update-verification
+    reason: >-
+      The updater takes whatever Steam serves and does not ask for the build id
+      first, so there is no verification step that could fail closed. It gains
+      one with the shared base image and the verified-build feed.
+    expires: "2027-03-31"
+  - id: no-build-watch
+    reason: >-
+      Nothing boots this image against today's Steam build on a schedule, so
+      "it still works" has no date on it. The build-watch workflow is a shared
+      reusable workflow in the plan rather than a per-game copy.
+    expires: "2027-03-31"
+  - id: steamcmd-baked-in
+    reason: >-
+      SteamCMD is proprietary and is fetched at build time, so every image
+      redistributes it. It is a known licence-audit item: either the audit
+      clears it or it moves to a first-start download. No test yet asserts that
+      no game binary is inside a published image.
+    expires: "2027-03-31"
+  - id: no-vulnerability-gate
+    reason: >-
+      Provenance and SBOM attestations are attached at publish, but nothing
+      scans them, so a known-vulnerable Debian package with a fix available does
+      not block a release. The scan lands as a shared compliance workflow.
+    expires: "2027-03-31"
