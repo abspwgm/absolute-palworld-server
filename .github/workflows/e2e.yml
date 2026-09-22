@@ -49,14 +49,16 @@ jobs:
           shellcheck --version
           shellcheck -S error -s bash -x scripts/* tests/*.sh tests/e2e/*.sh
 
-      - name: Admin password unit test
-        run: bash tests/test_admin_password.sh
-
-      - name: Updater retry unit test
-        run: bash tests/test_updater_retry.sh
-
-      - name: REST API unit test
-        run: bash tests/test_rest_api.sh
+      # Discovered, not listed. A unit test added to tests/ and forgotten here
+      # is a test that never runs, which is worse than not writing it.
+      - name: Unit tests
+        run: |
+          # tests/test_helpers.sh is the shared library, not a test.
+          for t in tests/test_*.sh; do
+            case "$(basename "${t}")" in test_helpers.sh) continue ;; esac
+            echo "--- ${t}"
+            bash "${t}"
+          done
 
   e2e-tests:
     name: End-to-End Tests
