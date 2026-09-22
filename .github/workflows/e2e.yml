@@ -55,6 +55,9 @@ jobs:
       - name: Updater retry unit test
         run: bash tests/test_updater_retry.sh
 
+      - name: REST API unit test
+        run: bash tests/test_rest_api.sh
+
   e2e-tests:
     name: End-to-End Tests
     runs-on: ubuntu-latest
@@ -135,6 +138,10 @@ jobs:
         env:
           TEST_TIMEOUT: 600
           STARTUP_WAIT: 300
+          # Public only on a GitHub-hosted runner, so a server that registers with
+          # Steam never lists an address of ours. Anywhere else it stays private
+          # and the discoverable rung reports "not run" rather than failing.
+          E2E_SERVER_PUBLIC: ${{ runner.environment == 'github-hosted' && 'true' || 'false' }}
 
       # ---------------------------------------------------------------------
       # Collect Artifacts (always, for debugging)
@@ -154,6 +161,18 @@ jobs:
           name: e2e-test-logs
           path: test-artifacts/
           retention-days: 7
+
+      # The ready-ladder verdict (standard 2.10), on its own so the fleet board's
+      # collector can read it without unpacking logs. Transport, not the record:
+      # the hub keeps the last conclusive verdict itself (2.11).
+      - name: Upload the verdict
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verdict
+          path: data/logs/verdict.json
+          if-no-files-found: warn
+          retention-days: 30
 
       # ---------------------------------------------------------------------
       # Update Server File Cache

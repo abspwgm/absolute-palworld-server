@@ -6,7 +6,7 @@
 # Don't use set -e - handle errors explicitly for better diagnostics
 
 # Source common functions
-if ! source /opt/palworld/scripts/common; then
+if ! source "${PALWORLD_SCRIPTS_PATH:-/opt/palworld/scripts}/common"; then
     echo "[ERROR] Failed to source common functions"
     exit 1
 fi
@@ -163,9 +163,17 @@ main() {
     # Check if we should skip due to server being idle
     local backup_if_idle="${BACKUPS_IF_IDLE:-false}"
     if [[ "${backup_if_idle,,}" == "true" ]] && [[ "${FORCE_BACKUP}" != "true" ]]; then
-        if is_server_running && ! is_server_idle; then
-            log_info "Skipping backup while players are connected (BACKUPS_IF_IDLE=true)"
-            return 0
+        if is_server_running; then
+            local idle=0
+            is_server_idle || idle=$?
+            if [[ ${idle} -eq 1 ]]; then
+                log_info "Skipping backup while players are connected (BACKUPS_IF_IDLE=true)"
+                return 0
+            elif [[ ${idle} -ne 0 ]]; then
+                # Unknown backs up: a backup taken with players on is still a
+                # backup, and skipping one on a guess leaves a world unprotected.
+                log_warn "Backing up anyway: the player count could not be read over the REST API"
+            fi
         fi
     fi
 
@@ -182,5 +190,8 @@ main() {
     return 0
 }
 
-# Run main
-main
+# Run main only when executed, so tests can source this file. Sourcing it used
+# to run a real backup.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main
+fi

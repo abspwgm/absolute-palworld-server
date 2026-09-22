@@ -243,6 +243,7 @@ run_test() {
     if [[ ! -f "${test_script}" ]]; then
         log_warn "Test not found: ${test_name}"
         TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+        TEST_RESULT["${test_name}"]="not_run"
         return 0
     fi
 
@@ -266,12 +267,23 @@ run_test() {
         export_logs "${test_name}_PASSED"
 
         TESTS_PASSED=$((TESTS_PASSED + 1))
+        TEST_RESULT["${test_name}"]="pass"
         return 0
     else
         local exit_code=$?
         local end_time
         end_time=$(date +%s)
         local duration=$((end_time - start_time))
+
+        # 77: the test could not apply here and says why (the automake
+        # convention). Not run, never failed; the verdict records the rung as
+        # not_run, so it cannot read "ready" on a run that skipped it.
+        if [[ ${exit_code} -eq 77 ]]; then
+            log_warn "Not run: ${test_name} (${duration}s)"
+            TESTS_SKIPPED=$((TESTS_SKIPPED + 1))
+            TEST_RESULT["${test_name}"]="not_run"
+            return 0
+        fi
 
         if [[ ${exit_code} -eq 124 ]]; then
             log_error "Test timed out: ${test_name} (${duration}s)"
@@ -289,6 +301,7 @@ run_test() {
 
         TESTS_FAILED=$((TESTS_FAILED + 1))
         FAILED_TESTS+=("${test_name}")
+        TEST_RESULT["${test_name}"]="fail"
         return 1
     fi
 }
@@ -299,13 +312,146 @@ run_test() {
 ALL_TESTS=(
     "server_start"
     "server_query"
+    "discoverable"
+    "authenticated"
     "backup"
     "graceful_shutdown"
     "restart_update"
 )
 
+# -----------------------------------------------------------------------------
+# The ready ladder (standard 2.10)
+# -----------------------------------------------------------------------------
+# A rung passes only when every test that proves it ran and passed. The verdict
+# is the highest rung reached with every rung below it passed too; verdict.json
+# is what the fleet board reads, and it never claims more.
+#
+# The authenticated rung is a stand-in, and the verdict names it (2.10): an
+# admin session on the REST API, not a player joining - no headless Palworld
+# client exists.
+LADDER=(up reachable discoverable authenticated recoverable)
+declare -A RUNG_TESTS=(
+    [up]="server_start"
+    [reachable]="server_query"
+    [discoverable]="discoverable"
+    [authenticated]="authenticated"
+    [recoverable]="backup graceful_shutdown restart_update"
+)
+AUTHENTICATED_STAND_IN="REST API admin session (info, players); not a player join"
+declare -A TEST_RESULT=()
+VERDICT_FILE="${LOGS_DIR}/verdict.json"
+
+# What the run needs from its environment rather than from the image. When one
+# is missing the run is inconclusive, not failed (2.11): a runner that cannot
+# reach Steam says nothing about whether the server works.
+check_preconditions() {
+    if ! docker info >/dev/null 2>&1; then
+        echo "the Docker daemon is not reachable"
+        return 1
+    fi
+    if command -v curl >/dev/null 2>&1 \
+        && ! curl -sf -m 20 -o /dev/null https://api.steampowered.com/ISteamWebAPIUtil/GetServerInfo/v1/; then
+        echo "Steam's web API is unreachable from the runner"
+        return 1
+    fi
+    local free_kb
+    free_kb="$(df -Pk "${PROJECT_ROOT}" | awk 'NR == 2 {print $4}')"
+    if [[ "${free_kb}" =~ ^[0-9]+$ ]] && (( free_kb < 5 * 1024 * 1024 )); then
+        echo "the runner has under 5 GB free for the install and its backups"
+        return 1
+    fi
+    return 0
+}
+
+rung_status() {
+    local test status="pass"
+    [[ -z "${RUNG_TESTS[$1]}" ]] && { echo "not_applicable"; return; }
+    for test in ${RUNG_TESTS[$1]}; do
+        case "${TEST_RESULT[${test}]:-not_run}" in
+            pass) ;;
+            fail) echo "fail"; return ;;
+            *) status="not_run" ;;
+        esac
+    done
+    echo "${status}"
+}
+
+# write_verdict <verdict> [reason] ; verdict.json, plus a job summary in CI.
+# Written while the container still exists: it holds the Steam build tested.
+write_verdict() {
+    local verdict="$1" reason="${2:-}" reached="null" rung status rungs="" build
+    for rung in "${LADDER[@]}"; do
+        status="$(rung_status "${rung}")"
+        rungs+="${rungs:+, }\"${rung}\": \"${status}\""
+    done
+    if [[ "${verdict}" != "inconclusive" ]]; then
+        for rung in "${LADDER[@]}"; do
+            status="$(rung_status "${rung}")"
+            [[ "${status}" == "not_applicable" ]] && continue
+            [[ "${status}" == "pass" ]] || break
+            reached="\"${rung}\""
+        done
+    fi
+    build="$(MSYS_NO_PATHCONV=1 docker exec "${CONTAINER_NAME}" sed -n 's/.*"buildid"[[:space:]]*"\([0-9]*\)".*/\1/p' \
+        /opt/palworld/server/steamapps/appmanifest_2394010.acf 2>/dev/null | head -1)" || true
+    local build_json="null"
+    [[ "${build}" =~ ^[0-9]+$ ]] && build_json="\"${build}\""
+    reason="${reason//\\/\\\\}"
+    reason="${reason//\"/\\\"}"
+    cat > "${VERDICT_FILE}" <<EOF
+{
+  "schema": 1,
+  "game": "palworld",
+  "verdict": "${verdict}",
+  "reason": "${reason}",
+  "reached": ${reached},
+  "rungs": {${rungs}},
+  "stand_ins": {"authenticated": "${AUTHENTICATED_STAND_IN}"},
+  "steam_build": ${build_json},
+  "commit": "${GITHUB_SHA:-$(git -C "${PROJECT_ROOT}" rev-parse HEAD 2>/dev/null)}",
+  "event": "${GITHUB_EVENT_NAME:-local}",
+  "finished_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+EOF
+    log_info "Verdict: ${verdict}${reason:+ (${reason})}; reached ${reached//\"/}; build ${build:-unknown}"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        {
+            echo "### Ready ladder: **${verdict}**${reason:+ — ${reason}}"
+            echo ""
+            echo "| Rung | Result |"
+            echo "|---|---|"
+            for rung in "${LADDER[@]}"; do
+                echo "| ${rung} | $(rung_status "${rung}") |"
+            done
+            echo ""
+            echo "Steam build: ${build:-unknown}. Authenticated rung: ${AUTHENTICATED_STAND_IN}."
+        } >> "${GITHUB_STEP_SUMMARY}"
+    fi
+}
+
+# Ready means every applicable rung passed: one that failed, or never ran, is
+# not proven.
+ladder_verdict() {
+    local verdict="ready" rung status
+    for rung in "${LADDER[@]}"; do
+        status="$(rung_status "${rung}")"
+        [[ "${status}" == "pass" || "${status}" == "not_applicable" ]] || verdict="degraded"
+    done
+    [[ "$(rung_status up)" == "pass" ]] || verdict="down"
+    echo "${verdict}"
+}
+
 run_all_tests() {
     local specific_test="$1"
+
+    # Before anything is built or started: a run that cannot test is
+    # inconclusive (2.11), and returns 3 so CI can tell it apart from a failure.
+    local missing
+    if [[ -z "${specific_test}" ]] && ! missing="$(check_preconditions)"; then
+        log_warn "Inconclusive before starting: ${missing}"
+        write_verdict "inconclusive" "${missing}"
+        return 3
+    fi
 
     # Setup
     setup_test_environment
@@ -327,6 +473,11 @@ run_all_tests() {
 
     # Export final logs
     export_logs "final_summary"
+
+    # A verdict describes the whole ladder, so a single-test debug run writes none.
+    if [[ -z "${specific_test}" ]]; then
+        write_verdict "$(ladder_verdict)"
+    fi
 
     # Print summary
     print_summary

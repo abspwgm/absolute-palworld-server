@@ -146,8 +146,15 @@ main() {
         local update_if_idle="${UPDATE_IF_IDLE:-true}"
 
         if [[ "${update_if_idle,,}" == "true" ]] && is_server_running; then
-            if ! is_server_idle; then
+            local idle=0
+            is_server_idle || idle=$?
+            if [[ ${idle} -eq 1 ]]; then
                 log_info "Players are connected, skipping update (UPDATE_IF_IDLE=true)"
+                return 0
+            elif [[ ${idle} -ne 0 ]]; then
+                # Unknown holds (standard 5.2): restarting under players who
+                # could not be counted is the failure this guard exists for.
+                log_warn "Holding the update: the player count could not be read over the REST API"
                 return 0
             fi
         fi
