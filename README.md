@@ -31,7 +31,7 @@ A production-ready Docker container for hosting Palworld dedicated servers with 
 ```yaml
 services:
   palworld:
-    image: ghcr.io/abspwgm/absolute-palworld-server:latest
+    image: abspwgm/absolute-palworld-server:latest
     container_name: palworld-server
     environment:
       - SERVER_NAME=My Palworld Server
