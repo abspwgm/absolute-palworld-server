@@ -1,24 +1,22 @@
 #!/bin/bash
 # =============================================================================
 # E2E Test: Discoverable (ready ladder rung 3, standard 2.10)
-# The server answers a Steam server-browser query (A2S_INFO) the way a player's
-# "add server" dialog sees it, and the player count it advertises agrees with
-# the count the idle guard reads over the REST API.
+# Steam lists the server publicly: its master server knows a Palworld server
+# (app 2394010) on this machine's public address and game port.
 # =============================================================================
 # server_query proves the ports are bound. That is "reachable", not
-# "discoverable": a bound port that answers nothing, or answers with the wrong
-# name, is a server nobody can find.
+# "discoverable": a bound port nobody is told about is a server nobody can find.
 #
-# The cross-check below makes two independent views of the server's state
-# agree: the one it advertises to the browser and the one it reports to an
-# authenticated admin session.
+# Palworld does not answer a Steam server-browser query (A2S_INFO) on its query
+# port. The port is bound, and it stays silent: three E2E runs with the server
+# public (-publiclobby) got no reply, and GameDig queries Palworld over its REST
+# API for the same reason. So this rung asks Steam instead, with the keyless
+# ISteamApps/GetServersAtAddress, for what is registered at the address the
+# runner reaches the internet from. That is the listing a player's browser is
+# built from, which the old query only inferred.
 #
-# The query goes from the runner, outside the container, to the container's own
-# address on the Docker network, with bash's /dev/udp. docker-compose.test.yml
-# deliberately publishes no host ports (the shared runner would collide on
-# them), so this is the path a machine on the same network would use; nothing
-# in it runs inside the container being tested. A2S_INFO has required a
-# challenge round trip since 2020; the first reply may be S2C_CHALLENGE (0x41).
+# A2S is still tried once: if a future Palworld answers it, the name, slots and
+# player count it advertises are checked as before.
 
 set -e
 
@@ -27,9 +25,14 @@ source "${SCRIPT_DIR}/../test_helpers.sh"
 
 TEST_NAME="discoverable"
 CONTAINER="palworld-server"
-# What docker-compose.test.yml configures, and so what the browser must show.
+APP_ID=2394010
+GAME_PORT=8211     # SERVER_PORT in docker-compose.test.yml
+# What docker-compose.test.yml configures, and so what a browser must show.
 EXPECTED_NAME="E2E Test Server"
 EXPECTED_SLOTS=4   # MAX_PLAYERS in docker-compose.test.yml
+# Registration follows startup by seconds; allow for a slow master server.
+LISTING_ATTEMPTS=12
+LISTING_INTERVAL=15
 
 A2S_QUERY='\xFF\xFF\xFF\xFFTSource Engine Query\x00'
 
@@ -69,68 +72,25 @@ byte() {
     POS=$(( POS + 2 ))
 }
 
-test_discoverable() {
-    log_test_start "${TEST_NAME}"
-    assert_container_running "${CONTAINER}"
+# steam_listing <ip> ; Steam's answer for that address, or nothing if Steam
+# did not answer.
+steam_listing() {
+    curl -sf -m 20 "https://api.steampowered.com/ISteamApps/GetServersAtAddress/v1/?addr=$1" 2>/dev/null || true
+}
 
-    # A private server is found by its address, not in a browser - Valheim's
-    # does not answer a server-browser query at all - so the rung is proven on
-    # a public server. Not run, not failed, when private; the workflow makes it
-    # public only on a GitHub-hosted runner, where that lists no address of ours.
-    local public
-    public="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${CONTAINER}" 2>/dev/null \
-        | sed -n 's/^SERVER_PUBLIC=//p' | head -1)"
-    if [[ "${public,,}" != "true" ]]; then
-        log_warn "Not run: the server is private (SERVER_PUBLIC=${public:-unset}), so it is not listed in a server browser"
-        log_warn "Set E2E_SERVER_PUBLIC=true only on a disposable network: a public server registers with Steam under this machine's public IP"
-        exit 77
-    fi
-
-    if ! wait_for_log "${CONTAINER}" "LogNet:" 300; then
-        log_warn "Server may not be fully ready"
-    fi
-
-    # The container's address on its Docker network (the first, if several).
+# check_a2s ; the old browser-query checks, for a server that answers.
+# Returns 0 if it answered and agreed, 1 if it answered and disagreed, 2 if
+# it did not answer.
+check_a2s() {
     QUERY_PORT=27015
     QUERY_HOST="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "${CONTAINER}" 2>/dev/null | awk '{print $1}')"
-    if [[ ! "${QUERY_HOST}" =~ ^[0-9]+(\.[0-9]+){3}$ ]]; then
-        log_error "Could not find the container's address on its Docker network"
-        docker inspect -f '{{json .NetworkSettings.Networks}}' "${CONTAINER}" 2>&1 || true
-        log_test_fail "${TEST_NAME}"
-        return 1
-    fi
-    log_info "Querying ${QUERY_HOST}:${QUERY_PORT}/udp from the runner"
-
-    # The query port can lag the game port for a moment after startup.
-    local attempt
-    HEX=""
-    for attempt in 1 2 3 4 5 6; do
-        HEX="$(a2s_info)" || true
-        [[ "${HEX:0:10}" == "ffffffff49" ]] && break
-        log_info "No A2S_INFO reply yet (attempt ${attempt}); retrying"
-        sleep 5
-    done
-
-    if [[ "${HEX:0:10}" != "ffffffff49" ]]; then
-        log_error "The server did not answer a server-browser query on 27015/udp"
-        log_error "Reply (hex): ${HEX:-<none>}"
-        # Which UDP ports the server actually holds: whether the query port is
-        # bound at all is the first thing to know about a silent query.
-        log_error "UDP ports the container holds:"
-        # Plain bash for the hex: the runner's awk is mawk, which has no strtonum.
-        local ports="" addr
-        while read -r _ addr _; do
-            [[ "${addr}" == *:* ]] || continue
-            ports+="$(( 16#${addr##*:} )) "
-        done < <(MSYS_NO_PATHCONV=1 docker exec "${CONTAINER}" sh -c 'cat /proc/net/udp /proc/net/udp6 2>/dev/null' | tail -n +2)
-        log_error "  $(tr ' ' '\n' <<< "${ports}" | sort -un | tr '\n' ' ')"
-        log_test_fail "${TEST_NAME}"
-        return 1
-    fi
+    [[ "${QUERY_HOST}" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || return 2
+    HEX="$(a2s_info)" || true
+    [[ "${HEX:0:10}" == "ffffffff49" ]] || return 2
 
     # Header (4 x FF), type 'I', protocol, then name, map, folder, game,
     # a 16-bit app id, players, max players, bots.
-    local protocol name map folder game players max_players bots
+    local protocol name map folder game players max_players bots failed=0
     POS=10
     byte protocol
     cstring name
@@ -141,37 +101,94 @@ test_discoverable() {
     byte players
     byte max_players
     byte bots
-    log_info "Browser sees: name='${name}' map='${map}' folder='${folder}' game='${game}' players=${players}/${max_players}"
+    log_info "The browser query sees: protocol=${protocol} name='${name}' map='${map}' folder='${folder}' game='${game}' players=${players}/${max_players} bots=${bots}"
 
-    local failed=0
-    if [[ "${name}" == "${EXPECTED_NAME}" ]]; then
-        log_success "The browser shows the configured name"
-    else
-        log_error "Expected name '${EXPECTED_NAME}', the browser shows '${name}'"
+    if [[ "${name}" != "${EXPECTED_NAME}" ]]; then
+        log_error "Expected name '${EXPECTED_NAME}', the browser query shows '${name}'"
         failed=1
     fi
-    if [[ "${max_players}" -eq ${EXPECTED_SLOTS} ]]; then
-        log_success "It advertises the configured ${EXPECTED_SLOTS} slots"
-    else
-        log_error "Expected ${EXPECTED_SLOTS} slots, the browser shows ${max_players}"
+    if [[ "${max_players}" -ne ${EXPECTED_SLOTS} ]]; then
+        log_error "Expected ${EXPECTED_SLOTS} slots, the browser query shows ${max_players}"
         failed=1
     fi
-
-    # The count the idle guard reads, through the same function it calls,
-    # against the count the server advertises. Two views of one fact.
-    local logged
-    logged="$(MSYS_NO_PATHCONV=1 docker exec "${CONTAINER}" bash -c 'source /opt/palworld/scripts/common && get_player_count' 2>/dev/null)" || true
-    if [[ "${logged}" =~ ^[0-9]+$ ]] && [[ "${logged}" -eq "${players}" ]]; then
-        log_success "The advertised player count (${players}) matches the one the idle guard reads over the REST API"
-    else
-        log_error "The browser says ${players} players; the idle guard's count from the REST API says '${logged:-<nothing>}'"
+    local counted
+    counted="$(MSYS_NO_PATHCONV=1 docker exec "${CONTAINER}" bash -c 'source /opt/palworld/scripts/common && get_player_count' 2>/dev/null)" || true
+    if [[ ! "${counted}" =~ ^[0-9]+$ ]] || [[ "${counted}" -ne "${players}" ]]; then
+        log_error "The browser query says ${players} players; the REST API says '${counted:-<nothing>}'"
         failed=1
     fi
+    return "${failed}"
+}
 
-    if [[ ${failed} -ne 0 ]]; then
+test_discoverable() {
+    log_test_start "${TEST_NAME}"
+    assert_container_running "${CONTAINER}"
+
+    # A private server is found by its address, not in a browser, so the rung
+    # is proven on a public server. Not run, not failed, when private; the
+    # workflow makes it public only on a GitHub-hosted runner, where the address
+    # Steam lists is GitHub's, not ours.
+    local public
+    public="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${CONTAINER}" 2>/dev/null \
+        | sed -n 's/^SERVER_PUBLIC=//p' | head -1)"
+    if [[ "${public,,}" != "true" ]]; then
+        log_warn "Not run: the server is private (SERVER_PUBLIC=${public:-unset}), so it is not listed in a server browser"
+        log_warn "Set E2E_SERVER_PUBLIC=true only on a disposable network: a public server registers with Steam under this machine's public IP"
+        exit 77
+    fi
+
+    if ! wait_for_log "${CONTAINER}" "Running Palworld dedicated server" 300; then
+        log_warn "Server may not be fully ready"
+    fi
+
+    # The address the runner reaches the internet from, which is the address
+    # the server registered from. Not printed: it identifies the machine.
+    local address="" source
+    for source in https://api.ipify.org https://checkip.amazonaws.com; do
+        address="$(curl -sf -m 10 "${source}" 2>/dev/null | tr -d '[:space:]')" || true
+        [[ "${address}" =~ ^[0-9]+(\.[0-9]+){3}$ ]] && break
+        address=""
+    done
+    if [[ -z "${address}" ]]; then
+        # An observer that cannot see is not a server that failed (2.11).
+        log_warn "Not run: could not learn this runner's public address, so Steam cannot be asked about it"
+        exit 77
+    fi
+
+    local attempt answer listed="" answered=0
+    for (( attempt = 1; attempt <= LISTING_ATTEMPTS; attempt++ )); do
+        answer="$(steam_listing "${address}")"
+        if jq -e '.response.success == true' <<< "${answer}" >/dev/null 2>&1; then
+            answered=1
+            listed="$(jq -r --argjson app "${APP_ID}" --argjson port "${GAME_PORT}" \
+                '[.response.servers[]? | select(.appid == $app and .gameport == $port)] | first // empty | .steamid // "unknown"' \
+                <<< "${answer}")"
+            [[ -n "${listed}" ]] && break
+        fi
+        log_info "Steam does not list the server yet (attempt ${attempt}/${LISTING_ATTEMPTS}); retrying"
+        sleep "${LISTING_INTERVAL}"
+    done
+
+    if [[ ${answered} -eq 0 ]]; then
+        log_warn "Not run: Steam's Web API did not answer, so the listing could not be checked"
+        exit 77
+    fi
+    if [[ -z "${listed}" ]]; then
+        log_error "Steam lists no Palworld server (app ${APP_ID}) on game port ${GAME_PORT} at this runner's address"
+        log_error "What Steam lists there: $(jq -c '[.response.servers[]? | {appid, gameport, lan, secure}]' <<< "${answer}" 2>/dev/null)"
         log_test_fail "${TEST_NAME}"
         return 1
     fi
+    log_success "Steam lists the server publicly (app ${APP_ID}, game port ${GAME_PORT}, Steam ID ${listed})"
+
+    local a2s=0
+    check_a2s || a2s=$?
+    case "${a2s}" in
+        0) log_success "It also answers a browser query, with the configured name, ${EXPECTED_SLOTS} slots and the REST API's player count" ;;
+        1) log_test_fail "${TEST_NAME}"; return 1 ;;
+        *) log_info "No answer to a browser query (A2S) on 27015/udp, as expected: Palworld does not answer one" ;;
+    esac
+
     log_test_pass "${TEST_NAME}"
     return 0
 }
