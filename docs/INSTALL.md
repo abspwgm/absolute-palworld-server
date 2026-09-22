@@ -63,7 +63,7 @@ save and quit). On Windows, use Notepad and make sure the name does not end in `
 ```yaml
 services:
   palworld:
-    image: ghcr.io/abspwgm/absolute-palworld-server:latest
+    image: abspowergaming/absolute-palworld-server:latest
     container_name: palworld-server
     environment:
       - SERVER_NAME=My Palworld Server
@@ -251,7 +251,7 @@ Still stuck? [Open an issue](https://github.com/abspwgm/absolute-palworld-server
 ## Words used in this guide
 
 - **Container:** the sealed box Docker runs the server in.
-- **Image:** the download that a container is started from. Ours is `ghcr.io/abspwgm/absolute-palworld-server:latest`.
+- **Image:** the download that a container is started from. Ours is `abspowergaming/absolute-palworld-server:latest`.
 - **Compose file:** `docker-compose.yml`, the one file holding all your server's settings.
 - **Volume:** a storage area Docker manages that the container saves into, so your world
   survives updates and restarts.
