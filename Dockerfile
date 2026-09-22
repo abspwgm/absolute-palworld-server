@@ -53,6 +53,15 @@ COPY --from=steamcmd /root/Steam /root/Steam
 RUN groupadd -g 1000 palworld \
     && useradd -u 1000 -g palworld -m -s /bin/bash palworld
 
+# The server loads steamclient.so from its own $HOME/.steam/sdk{64,32}. SteamCMD
+# leaves its copy under /root, which the palworld user cannot read, and without
+# it Steam never initialises - the Rust image lost months to exactly that
+# (abspwgm/absolute-rust-server#14). supervisord.conf gives the process this HOME.
+RUN mkdir -p /home/palworld/.steam/sdk64 /home/palworld/.steam/sdk32 \
+    && cp /opt/steamcmd/linux64/steamclient.so /home/palworld/.steam/sdk64/steamclient.so \
+    && cp /opt/steamcmd/linux32/steamclient.so /home/palworld/.steam/sdk32/steamclient.so \
+    && chown -R palworld:palworld /home/palworld/.steam
+
 # Create required directories
 RUN mkdir -p /opt/palworld/server \
     && mkdir -p /config/settings \

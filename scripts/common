@@ -239,12 +239,29 @@ current_admin_password() {
 # non-2xx answer, a refused password (401) included. The password goes to curl
 # on stdin, never on its command line where ps would show it.
 rest_api() {
-    local method="$1" endpoint="$2" timeout="${3:-15}" password
+    local method="$1" endpoint="$2" timeout="${3:-15}" password body code
     is_rest_api_enabled || return 1
     password="$(current_admin_password)" || return 1
-    printf 'user = "admin:%s"\n' "${password}" | curl -sf -m "${timeout}" -K - \
-        -X "${method}" -H 'Accept: application/json' \
-        "http://127.0.0.1:$(get_rest_api_port)/v1/api/${endpoint}"
+    local data=()
+    # A POST with no body sends no Content-Length, which a server may refuse;
+    # the save request failed in CI with no reason given. An empty JSON body
+    # carries a Content-Length and says what it is.
+    [[ "${method}" == "POST" ]] && data=(-H 'Content-Type: application/json' --data '{}')
+    body="$(mktemp)"
+    code="$(printf 'user = "admin:%s"\n' "${password}" | curl -s -m "${timeout}" -K - \
+        -X "${method}" -H 'Accept: application/json' "${data[@]}" \
+        -o "${body}" -w '%{http_code}' \
+        "http://127.0.0.1:$(get_rest_api_port)/v1/api/${endpoint}")"
+    if [[ "${code}" =~ ^2[0-9][0-9]$ ]]; then
+        cat "${body}"
+        rm -f "${body}"
+        return 0
+    fi
+    # Say why, on stderr, so a failure in the logs can be diagnosed. The body is
+    # the server's own error message; the password is never part of it.
+    log_warn "REST API ${method} /v1/api/${endpoint} answered HTTP ${code:-000}: $(head -c 200 "${body}" 2>/dev/null)" >&2
+    rm -f "${body}"
+    return 1
 }
 
 # The number of players connected, as the server itself reports it. This was a

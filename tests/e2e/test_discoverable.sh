@@ -114,6 +114,16 @@ test_discoverable() {
     if [[ "${HEX:0:10}" != "ffffffff49" ]]; then
         log_error "The server did not answer a server-browser query on 27015/udp"
         log_error "Reply (hex): ${HEX:-<none>}"
+        # Which UDP ports the server actually holds: whether the query port is
+        # bound at all is the first thing to know about a silent query.
+        log_error "UDP ports the container holds:"
+        # Plain bash for the hex: the runner's awk is mawk, which has no strtonum.
+        local ports="" addr
+        while read -r _ addr _; do
+            [[ "${addr}" == *:* ]] || continue
+            ports+="$(( 16#${addr##*:} )) "
+        done < <(MSYS_NO_PATHCONV=1 docker exec "${CONTAINER}" sh -c 'cat /proc/net/udp /proc/net/udp6 2>/dev/null' | tail -n +2)
+        log_error "  $(tr ' ' '\n' <<< "${ports}" | sort -un | tr '\n' ' ')"
         log_test_fail "${TEST_NAME}"
         return 1
     fi
