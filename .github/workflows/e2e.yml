@@ -138,10 +138,6 @@ jobs:
         env:
           TEST_TIMEOUT: 600
           STARTUP_WAIT: 300
-          # Public only on a GitHub-hosted runner, so a server that registers with
-          # Steam never lists an address of ours. Anywhere else it stays private
-          # and the discoverable rung reports "not run" rather than failing.
-          E2E_SERVER_PUBLIC: ${{ runner.environment == 'github-hosted' && 'true' || 'false' }}
 
       # ---------------------------------------------------------------------
       # Collect Artifacts (always, for debugging)

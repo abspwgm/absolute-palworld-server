@@ -312,7 +312,6 @@ run_test() {
 ALL_TESTS=(
     "server_start"
     "server_query"
-    "discoverable"
     "authenticated"
     "backup"
     "graceful_shutdown"
@@ -329,15 +328,20 @@ ALL_TESTS=(
 # The authenticated rung is a stand-in, and the verdict names it (2.10): an
 # admin session on the REST API, not a player joining - no headless Palworld
 # client exists.
+#
+# The discoverable rung is not applicable, not failed, and the verdict says why
+# (.absolute/policy.yml, ready_ladder). tests/e2e/test_discoverable.sh is the
+# check for a host the internet can reach: `./tests/run_e2e.sh discoverable`.
 LADDER=(up reachable discoverable authenticated recoverable)
 declare -A RUNG_TESTS=(
     [up]="server_start"
     [reachable]="server_query"
-    [discoverable]="discoverable"
+    [discoverable]=""
     [authenticated]="authenticated"
     [recoverable]="backup graceful_shutdown restart_update"
 )
 AUTHENTICATED_STAND_IN="REST API admin session (info, players); not a player join"
+NOT_APPLICABLE_REASON="Palworld lists servers in Pocketpair's lobby, which lists only servers the internet can reach; CI runners cannot be reached, and Palworld answers no Steam query"
 declare -A TEST_RESULT=()
 VERDICT_FILE="${LOGS_DIR}/verdict.json"
 
@@ -407,6 +411,7 @@ write_verdict() {
   "reached": ${reached},
   "rungs": {${rungs}},
   "stand_ins": {"authenticated": "${AUTHENTICATED_STAND_IN}"},
+  "not_applicable": {"discoverable": "${NOT_APPLICABLE_REASON}"},
   "steam_build": ${build_json},
   "commit": "${GITHUB_SHA:-$(git -C "${PROJECT_ROOT}" rev-parse HEAD 2>/dev/null)}",
   "event": "${GITHUB_EVENT_NAME:-local}",
@@ -424,7 +429,7 @@ EOF
                 echo "| ${rung} | $(rung_status "${rung}") |"
             done
             echo ""
-            echo "Steam build: ${build:-unknown}. Authenticated rung: ${AUTHENTICATED_STAND_IN}."
+            echo "Steam build: ${build:-unknown}. Authenticated rung: ${AUTHENTICATED_STAND_IN}. Discoverable: not applicable (${NOT_APPLICABLE_REASON})."
         } >> "${GITHUB_STEP_SUMMARY}"
     fi
 }

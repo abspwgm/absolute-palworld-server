@@ -23,9 +23,9 @@ services:
       - SERVER_DESCRIPTION=E2E Test Server
       - SERVER_PASSWORD=testpass123
       - ADMIN_PASSWORD=admintest123
-      # Private unless the workflow says otherwise, and it only says so on a
-      # GitHub-hosted runner: a public server registers with Steam under the
-      # host's public IP. The discoverable rung needs it public.
+      # Private: a public server registers in Palworld's community list under
+      # the host's public IP. E2E_SERVER_PUBLIC=true is for the discoverable
+      # check, on a host the internet can reach and whose address may be listed.
       - SERVER_PUBLIC=${E2E_SERVER_PUBLIC:-false}
       - MAX_PLAYERS=4
       - SERVER_ARGS=
