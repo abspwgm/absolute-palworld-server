@@ -7,7 +7,7 @@
 # This prevents premature exits during graceful shutdown
 
 # Source common functions
-if ! source /opt/palworld/scripts/common; then
+if ! source "${PALWORLD_SCRIPTS_PATH:-/opt/palworld/scripts}/common"; then
     echo "[ERROR] Failed to source common functions"
     exit 1
 fi
@@ -24,6 +24,13 @@ build_server_args() {
     # Query port (usually port + 1 for Steam queries)
     local query_port=$(($(get_server_port) + 16804))
     args="${args} -queryport=27015"
+
+    # A public server is listed in the in-game community server browser, and
+    # Palworld does that only with -publiclobby. SERVER_PUBLIC (default true)
+    # used to be computed and then never used, so no server was ever listed.
+    if is_server_public; then
+        args="${args} -publiclobby"
+    fi
 
     # Additional custom arguments
     if [[ -n "${SERVER_ARGS}" ]]; then
@@ -108,23 +115,33 @@ stop_server() {
         return 0
     fi
 
-    log_info "Sending SIGINT to server (PID: ${pid}) for graceful shutdown"
+    # How long to save and exit before forcing it. The innermost rung of a
+    # ladder that must stay ordered, or the save is cut short:
+    #   this timeout (120s) < supervisor stopwaitsecs (150s) < compose stop_grace_period (180s)
+    # All three were 120s, so supervisor could SIGKILL a server still saving.
+    local timeout="${SHUTDOWN_TIMEOUT:-120}"
+    local started=${SECONDS}
 
-    # Send SIGINT for graceful shutdown (allows world save)
+    # Ask for the save and wait for the server to confirm it, rather than
+    # trusting SIGINT to write the world: that assumption is exactly what left
+    # the Rust image exiting 0 with nothing saved. Half the budget at most, so a
+    # save that hangs still leaves time for a clean exit.
+    if ! save_world; then
+        log_warn "Stopping without a confirmed save"
+    fi
+
+    log_info "Sending SIGINT to server (PID: ${pid})"
     kill -INT "${pid}" 2>/dev/null || true
 
-    # Wait for server to stop (up to 120 seconds for world save)
-    local timeout=120
     local elapsed=0
-
     while kill -0 "${pid}" 2>/dev/null; do
+        elapsed=$(( SECONDS - started ))
         if [[ ${elapsed} -ge ${timeout} ]]; then
             log_warn "Server did not stop gracefully, sending SIGKILL"
             kill -KILL "${pid}" 2>/dev/null || true
             break
         fi
         sleep 1
-        elapsed=$((elapsed + 1))
 
         # Log progress every 10 seconds
         if [[ $((elapsed % 10)) -eq 0 ]]; then
@@ -164,15 +181,31 @@ status_server() {
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
+# supervisor sends stopsignal=INT to *this wrapper*, not to the game, and does
+# not set stopasgroup. With no handler, bash simply died: the game was orphaned,
+# never asked to save, and Docker's SIGKILL took it moments later. The Rust image
+# had the same bug (abspwgm/absolute-rust-server#5); this is its fix.
+on_shutdown() {
+    log_info "Shutdown signal received; stopping the server"
+    stop_server
+    exit 0
+}
+
+main() {
 case "${1:-start}" in
     start)
+        trap on_shutdown SIGINT SIGTERM
         start_server
 
         # Keep running to maintain supervisor process
         # The server may exit periodically (especially during testing without real world data)
-        # We need to keep this script alive so supervisor doesn't think it crashed
+        # We need to keep this script alive so supervisor doesn't think it crashed.
+        # Every sleep runs in the background and is waited on: bash runs a trap
+        # only once the foreground command returns, so a plain `sleep 30` held
+        # the shutdown handler back by up to 30s of supervisor's window.
         while true; do
-            sleep 30
+            sleep 30 &
+            wait $!
 
             if ! is_server_running; then
                 # Server process not found - check if we should restart
@@ -188,12 +221,14 @@ case "${1:-start}" in
                     start_server
 
                     # Wait for startup
-                    sleep 5
+                    sleep 5 &
+                    wait $!
 
                     if ! is_server_running; then
                         # If still not running after restart, wait and try again
                         log_warn "Server failed to start, waiting before retry..."
-                        sleep 30
+                        sleep 30 &
+                        wait $!
                     fi
                 fi
             fi
@@ -213,3 +248,10 @@ case "${1:-start}" in
         exit 1
         ;;
 esac
+}
+
+# Run main only when executed, so tests can source this file and call
+# stop_server directly.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

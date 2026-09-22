@@ -23,7 +23,10 @@ services:
       - SERVER_DESCRIPTION=E2E Test Server
       - SERVER_PASSWORD=testpass123
       - ADMIN_PASSWORD=admintest123
-      - SERVER_PUBLIC=false
+      # Private: a public server registers in Palworld's community list under
+      # the host's public IP. E2E_SERVER_PUBLIC=true is for the discoverable
+      # check, on a host the internet can reach and whose address may be listed.
+      - SERVER_PUBLIC=${E2E_SERVER_PUBLIC:-false}
       - MAX_PLAYERS=4
       - SERVER_ARGS=
 
@@ -83,7 +86,7 @@ services:
       - ${USE_BIND_MOUNTS:+./data/server}${USE_BIND_MOUNTS:-palworld-test-server}:/opt/palworld/server
 
     # Graceful shutdown timeout (allows world save)
-    stop_grace_period: 2m
+    stop_grace_period: 3m
 
     # Don't restart in test mode
     restart: "no"

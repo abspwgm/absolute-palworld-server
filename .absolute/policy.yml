@@ -28,6 +28,35 @@ tiers:
     command: bash tests/run_e2e.sh
     budget: as long as it takes
 
+ready_ladder:
+  up: server_start
+  reachable: server_query - the game and query ports are bound
+  discoverable:
+    status: not_applicable
+    reason: >-
+      Palworld's server browser is Pocketpair's community list, not Steam's. A
+      public (-publiclobby) server registers with api.palworldgame.com, and the
+      list shows only servers the internet can reach. Palworld answers no Steam
+      server-browser query (A2S) and Steam's master server does not list it, so
+      there is nothing to ask from inside the network either. E2E runs on
+      runners the internet cannot reach: on a GitHub-hosted runner, public,
+      the server never appeared in the community list across a run of three
+      minutes' polling, and our own hardware must not be listed under the home
+      address. "Ready" for Palworld means every other rung passed, and anything
+      that shows the verdict says so. tests/e2e/test_discoverable.sh is the
+      check, kept for a host that can run it: it finds the server in the
+      community list at the host's address and port, and checks its name,
+      slots and live player count against the REST API.
+    revisit_when: >-
+      a staging host the internet can reach, whose address may be listed, runs
+      the E2E suite - then discoverable is `E2E_SERVER_PUBLIC=true
+      ./tests/run_e2e.sh discoverable` there
+  authenticated: >-
+    authenticated - a stand-in: an admin session on the REST API with the
+    server's own password (info, live player count; a wrong password refused).
+    No headless Palworld client exists to join as a player.
+  recoverable: backup, graceful_shutdown, restart_update
+
 build:
   base_images:
     - catalog_id: debian-bookworm-slim

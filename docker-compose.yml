@@ -221,7 +221,7 @@ services:
     # =========================================================================
 
     # Graceful shutdown timeout (allows world save)
-    stop_grace_period: 2m
+    stop_grace_period: 3m
 
     # Restart policy
     restart: unless-stopped

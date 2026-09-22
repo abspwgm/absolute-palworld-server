@@ -92,11 +92,24 @@ is_rcon_enabled() {
     [[ "${rcon,,}" == "true" || "${rcon}" == "1" ]]
 }
 
+# The REST API is how this image reads the player count and asks for a save,
+# so it is on by default. It listens inside the container; docker-compose.yml
+# does not publish its port, and nothing should (standard 6.3): it is an admin
+# interface, authenticated with AdminPassword like RCON.
+is_rest_api_enabled() {
+    local rest="${REST_API_ENABLED:-true}"
+    [[ "${rest,,}" == "true" || "${rest}" == "1" ]]
+}
+
+get_rest_api_port() {
+    echo "${REST_API_PORT:-8212}"
+}
+
 # -----------------------------------------------------------------------------
 # Admin password
 # -----------------------------------------------------------------------------
-# RCON authenticates with AdminPassword, so an empty or well-known one is a
-# remote console open to anyone who can reach the port.
+# RCON and the REST API both authenticate with AdminPassword, so an empty or
+# well-known one is an admin interface open to anyone who can reach the port.
 ADMIN_PASSWORD_FILE="${CONFIG_PATH}/admin_password"
 ADMIN_PASSWORD_DENYLIST=("changeme" "password" "your_secure_password" "admin" "adminpassword" "rcon")
 
@@ -120,7 +133,7 @@ is_default_admin_password() {
 # ${ADMIN_PASSWORD_FILE}; the value itself is never logged.
 # Note: this logs to stdout, so never call it via $(...) - read ADMIN_PASSWORD
 resolve_admin_password() {
-    if ! is_rcon_enabled; then
+    if ! is_rcon_enabled && ! is_rest_api_enabled; then
         return 0
     fi
 
@@ -146,15 +159,17 @@ resolve_admin_password() {
     local generated
     generated=$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32)
     if [[ ${#generated} -lt 24 ]]; then
-        log_error "Failed to generate an admin password, disabling RCON"
+        log_error "Failed to generate an admin password, disabling RCON and the REST API"
         RCON_ENABLED=false
+        REST_API_ENABLED=false
         return 1
     fi
 
     # Write with mode 600, owned by the server user
     if ! (umask 077 && echo "${generated}" > "${ADMIN_PASSWORD_FILE}"); then
-        log_error "Failed to write ${ADMIN_PASSWORD_FILE}, disabling RCON"
+        log_error "Failed to write ${ADMIN_PASSWORD_FILE}, disabling RCON and the REST API"
         RCON_ENABLED=false
+        REST_API_ENABLED=false
         return 1
     fi
     chmod 600 "${ADMIN_PASSWORD_FILE}"
@@ -203,16 +218,81 @@ get_server_pid() {
     fi
 }
 
-get_player_count() {
-    # Palworld doesn't have a simple way to get player count without RCON
-    # This is a placeholder implementation
-    echo "0"
+# -----------------------------------------------------------------------------
+# REST API: the server's own view of itself
+# -----------------------------------------------------------------------------
+# The password the running server was started with, without generating one.
+# resolve_admin_password would invent a fresh password if the file were
+# missing, and a password the server never saw can only be refused.
+current_admin_password() {
+    if ! is_default_admin_password "${ADMIN_PASSWORD:-}"; then
+        echo "${ADMIN_PASSWORD}"
+        return 0
+    fi
+    local stored=""
+    [[ -r "${ADMIN_PASSWORD_FILE}" ]] && stored=$(tr -d '\r\n' < "${ADMIN_PASSWORD_FILE}")
+    [[ ${#stored} -ge 24 ]] || return 1
+    echo "${stored}"
 }
 
+# rest_api <GET|POST> <endpoint> [timeout] ; prints the body, fails on any
+# non-2xx answer, a refused password (401) included. The password goes to curl
+# on stdin, never on its command line where ps would show it.
+rest_api() {
+    local method="$1" endpoint="$2" timeout="${3:-15}" password body code
+    is_rest_api_enabled || return 1
+    password="$(current_admin_password)" || return 1
+    local data=()
+    # A POST with no body sends no Content-Length, which a server may refuse;
+    # the save request failed in CI with no reason given. An empty JSON body
+    # carries a Content-Length and says what it is.
+    [[ "${method}" == "POST" ]] && data=(-H 'Content-Type: application/json' --data '{}')
+    body="$(mktemp)"
+    code="$(printf 'user = "admin:%s"\n' "${password}" | curl -s -m "${timeout}" -K - \
+        -X "${method}" -H 'Accept: application/json' "${data[@]}" \
+        -o "${body}" -w '%{http_code}' \
+        "http://127.0.0.1:$(get_rest_api_port)/v1/api/${endpoint}")"
+    if [[ "${code}" =~ ^2[0-9][0-9]$ ]]; then
+        cat "${body}"
+        rm -f "${body}"
+        return 0
+    fi
+    # Say why, on stderr, so a failure in the logs can be diagnosed. The body is
+    # the server's own error message; the password is never part of it.
+    log_warn "REST API ${method} /v1/api/${endpoint} answered HTTP ${code:-000}: $(head -c 200 "${body}" 2>/dev/null)" >&2
+    rm -f "${body}"
+    return 1
+}
+
+# The number of players connected, as the server itself reports it. This was a
+# placeholder that always said 0, so the idle guard never held an update and
+# the backup schedule never waited. A count that cannot be read prints nothing
+# and returns 1: unknown is not zero (standard 2.8).
+get_player_count() {
+    local body count
+    body="$(rest_api GET players)" || return 1
+    count="$(jq -r '.players | length' <<< "${body}" 2>/dev/null)"
+    [[ "${count}" =~ ^[0-9]+$ ]] || return 1
+    echo "${count}"
+}
+
+# 0: nobody online. 1: players online. 2: unknown - each caller decides what
+# unknown means for it (the updater holds, a backup goes ahead).
 is_server_idle() {
     local players
-    players=$(get_player_count)
+    players="$(get_player_count)" || return 2
     [[ "${players}" == "0" ]]
+}
+
+# Asks the server to write the world now, and succeeds only when it answers
+# that it has. SIGINT alone is not relied on for the save (see stop_server).
+save_world() {
+    if rest_api POST save 60 > /dev/null; then
+        log_success "World saved (the server confirmed over the REST API)"
+        return 0
+    fi
+    log_warn "The server did not confirm a save over the REST API"
+    return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -311,11 +391,11 @@ generate_settings_file() {
     mkdir -p "${SETTINGS_PATH}"
 
     # Get boolean values
-    local is_public="True"
-    is_server_public || is_public="False"
-
     local rcon_enabled="False"
     is_rcon_enabled && rcon_enabled="True"
+
+    local rest_enabled="False"
+    is_rest_api_enabled && rest_enabled="True"
 
     local pvp_enabled="False"
     [[ "${IS_PVP,,}" == "true" ]] && pvp_enabled="True"
@@ -358,7 +438,7 @@ generate_settings_file() {
 
     cat > "${settings_file}" << EOF
 [/Script/Pal.PalGameWorldSettings]
-OptionSettings=(Difficulty=${DIFFICULTY:-None},DayTimeSpeedRate=${DAY_TIME_SPEED_RATE:-1.000000},NightTimeSpeedRate=${NIGHT_TIME_SPEED_RATE:-1.000000},ExpRate=${EXP_RATE:-1.000000},PalCaptureRate=${PAL_CAPTURE_RATE:-1.000000},PalSpawnNumRate=${PAL_SPAWN_NUM_RATE:-1.000000},PalDamageRateAttack=${PAL_DAMAGE_RATE_ATTACK:-1.000000},PalDamageRateDefense=${PAL_DAMAGE_RATE_DEFENSE:-1.000000},PlayerDamageRateAttack=${PLAYER_DAMAGE_RATE_ATTACK:-1.000000},PlayerDamageRateDefense=${PLAYER_DAMAGE_RATE_DEFENSE:-1.000000},PlayerStomachDecreaceRate=${PLAYER_STOMACH_DECREASE_RATE:-1.000000},PlayerStaminaDecreaceRate=${PLAYER_STAMINA_DECREASE_RATE:-1.000000},PlayerAutoHPRegeneRate=${PLAYER_AUTO_HP_REGEN_RATE:-1.000000},PlayerAutoHpRegeneRateInSleep=${PLAYER_AUTO_HP_REGEN_RATE_IN_SLEEP:-1.000000},BuildObjectDamageRate=${BUILD_OBJECT_DAMAGE_RATE:-1.000000},BuildObjectDeteriorationDamageRate=${BUILD_OBJECT_DETERIORATION_DAMAGE_RATE:-1.000000},CollectionDropRate=${COLLECTION_DROP_RATE:-1.000000},CollectionObjectHpRate=${COLLECTION_OBJECT_HP_RATE:-1.000000},CollectionObjectRespawnSpeedRate=${COLLECTION_OBJECT_RESPAWN_SPEED_RATE:-1.000000},EnemyDropItemRate=${ENEMY_DROP_ITEM_RATE:-1.000000},DeathPenalty=${DEATH_PENALTY:-All},bEnablePlayerToPlayerDamage=${player_damage},bEnableFriendlyFire=${friendly_fire},bEnableInvaderEnemy=${invader_enemy},bActiveUNKO=${ACTIVE_UNKO:-false},bEnableAimAssistPad=${aim_assist_pad},bEnableAimAssistKeyboard=${aim_assist_keyboard},DropItemMaxNum=${DROP_ITEM_MAX_NUM:-3000},DropItemMaxNum_UNKO=${DROP_ITEM_MAX_NUM_UNKO:-100},BaseCampMaxNum=${BASE_CAMP_MAX_NUM:-128},BaseCampWorkerMaxNum=${BASE_CAMP_WORKER_MAX_NUM:-15},DropItemAliveMaxHours=${DROP_ITEM_ALIVE_MAX_HOURS:-1.000000},bAutoResetGuildNoOnlinePlayers=${auto_reset_guild},AutoResetGuildTimeNoOnlinePlayers=${AUTO_RESET_GUILD_TIME_NO_ONLINE_PLAYERS:-72.000000},GuildPlayerMaxNum=${GUILD_PLAYER_MAX_NUM:-20},PalEggDefaultHatchingTime=${PAL_EGG_DEFAULT_HATCHING_TIME:-72.000000},WorkSpeedRate=${WORK_SPEED_RATE:-1.000000},bIsMultiplay=${IS_MULTIPLAY:-false},bIsPvP=${pvp_enabled},bCanPickupOtherGuildDeathPenaltyDrop=${pickup_death_penalty},bEnableNonLoginPenalty=${non_login_penalty},bEnableFastTravel=${fast_travel},bIsStartLocationSelectByMap=${location_select},bExistPlayerAfterLogout=${exist_player_logout},bEnableDefenseOtherGuildPlayer=${defense_other_guild},CoopPlayerMaxNum=${COOP_PLAYER_MAX_NUM:-4},ServerPlayerMaxNum=${SERVER_PLAYER_MAX_NUM:-32},ServerName="${SERVER_NAME:-My Palworld Server}",ServerDescription="${SERVER_DESCRIPTION:-}",AdminPassword="${ADMIN_PASSWORD:-}",ServerPassword="${SERVER_PASSWORD:-}",PublicPort=${SERVER_PORT:-8211},PublicIP="",RCONEnabled=${rcon_enabled},RCONPort=${RCON_PORT:-25575},Region="",bUseAuth=True,BanListURL="https://api.palworldgame.com/api/banlist.txt")
+OptionSettings=(Difficulty=${DIFFICULTY:-None},DayTimeSpeedRate=${DAY_TIME_SPEED_RATE:-1.000000},NightTimeSpeedRate=${NIGHT_TIME_SPEED_RATE:-1.000000},ExpRate=${EXP_RATE:-1.000000},PalCaptureRate=${PAL_CAPTURE_RATE:-1.000000},PalSpawnNumRate=${PAL_SPAWN_NUM_RATE:-1.000000},PalDamageRateAttack=${PAL_DAMAGE_RATE_ATTACK:-1.000000},PalDamageRateDefense=${PAL_DAMAGE_RATE_DEFENSE:-1.000000},PlayerDamageRateAttack=${PLAYER_DAMAGE_RATE_ATTACK:-1.000000},PlayerDamageRateDefense=${PLAYER_DAMAGE_RATE_DEFENSE:-1.000000},PlayerStomachDecreaceRate=${PLAYER_STOMACH_DECREASE_RATE:-1.000000},PlayerStaminaDecreaceRate=${PLAYER_STAMINA_DECREASE_RATE:-1.000000},PlayerAutoHPRegeneRate=${PLAYER_AUTO_HP_REGEN_RATE:-1.000000},PlayerAutoHpRegeneRateInSleep=${PLAYER_AUTO_HP_REGEN_RATE_IN_SLEEP:-1.000000},BuildObjectDamageRate=${BUILD_OBJECT_DAMAGE_RATE:-1.000000},BuildObjectDeteriorationDamageRate=${BUILD_OBJECT_DETERIORATION_DAMAGE_RATE:-1.000000},CollectionDropRate=${COLLECTION_DROP_RATE:-1.000000},CollectionObjectHpRate=${COLLECTION_OBJECT_HP_RATE:-1.000000},CollectionObjectRespawnSpeedRate=${COLLECTION_OBJECT_RESPAWN_SPEED_RATE:-1.000000},EnemyDropItemRate=${ENEMY_DROP_ITEM_RATE:-1.000000},DeathPenalty=${DEATH_PENALTY:-All},bEnablePlayerToPlayerDamage=${player_damage},bEnableFriendlyFire=${friendly_fire},bEnableInvaderEnemy=${invader_enemy},bActiveUNKO=${ACTIVE_UNKO:-false},bEnableAimAssistPad=${aim_assist_pad},bEnableAimAssistKeyboard=${aim_assist_keyboard},DropItemMaxNum=${DROP_ITEM_MAX_NUM:-3000},DropItemMaxNum_UNKO=${DROP_ITEM_MAX_NUM_UNKO:-100},BaseCampMaxNum=${BASE_CAMP_MAX_NUM:-128},BaseCampWorkerMaxNum=${BASE_CAMP_WORKER_MAX_NUM:-15},DropItemAliveMaxHours=${DROP_ITEM_ALIVE_MAX_HOURS:-1.000000},bAutoResetGuildNoOnlinePlayers=${auto_reset_guild},AutoResetGuildTimeNoOnlinePlayers=${AUTO_RESET_GUILD_TIME_NO_ONLINE_PLAYERS:-72.000000},GuildPlayerMaxNum=${GUILD_PLAYER_MAX_NUM:-20},PalEggDefaultHatchingTime=${PAL_EGG_DEFAULT_HATCHING_TIME:-72.000000},WorkSpeedRate=${WORK_SPEED_RATE:-1.000000},bIsMultiplay=${IS_MULTIPLAY:-false},bIsPvP=${pvp_enabled},bCanPickupOtherGuildDeathPenaltyDrop=${pickup_death_penalty},bEnableNonLoginPenalty=${non_login_penalty},bEnableFastTravel=${fast_travel},bIsStartLocationSelectByMap=${location_select},bExistPlayerAfterLogout=${exist_player_logout},bEnableDefenseOtherGuildPlayer=${defense_other_guild},CoopPlayerMaxNum=${COOP_PLAYER_MAX_NUM:-4},ServerPlayerMaxNum=${SERVER_PLAYER_MAX_NUM:-32},ServerName="${SERVER_NAME:-My Palworld Server}",ServerDescription="${SERVER_DESCRIPTION:-}",AdminPassword="${ADMIN_PASSWORD:-}",ServerPassword="${SERVER_PASSWORD:-}",PublicPort=${SERVER_PORT:-8211},PublicIP="",RCONEnabled=${rcon_enabled},RCONPort=${RCON_PORT:-25575},RESTAPIEnabled=${rest_enabled},RESTAPIPort=$(get_rest_api_port),Region="",bUseAuth=True,BanListURL="https://api.palworldgame.com/api/banlist.txt")
 EOF
 
     log_success "PalWorldSettings.ini generated"

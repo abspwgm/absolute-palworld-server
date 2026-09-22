@@ -28,13 +28,16 @@ check() {
 
 # Run resolve_admin_password in a clean subshell. Results land in ${WORK_DIR}:
 # resolved (the password), output (everything logged).
+# resolve_with <rcon enabled> <password> [rest api enabled, default: same as rcon]
 resolve_with() {
     local enabled="$1"
     local password="$2"
+    local rest="${3:-$1}"
     (
         TEST_ROOT="${WORK_DIR}/root"
         mkdir -p "${TEST_ROOT}/config"
         RCON_ENABLED="${enabled}"
+        REST_API_ENABLED="${rest}"
         ADMIN_PASSWORD="${password}"
         source "${PROJECT_DIR}/scripts/common"
         resolve_admin_password > "${WORK_DIR}/output" 2>&1
@@ -75,11 +78,18 @@ FIRST="$(resolved)"
 resolve_with true ""
 check "generated password is reused on restart" test "$(resolved)" == "${FIRST}"
 
-# RCON disabled: nothing is generated, nothing is written
+# Both admin interfaces disabled: nothing is generated, nothing is written
 reset_state
-resolve_with false changeme
-check "rcon disabled: no file written" test ! -e "$(password_file)"
-check "rcon disabled: password untouched" test "$(resolved)" == "changeme"
+resolve_with false changeme false
+check "rcon and rest api disabled: no file written" test ! -e "$(password_file)"
+check "rcon and rest api disabled: password untouched" test "$(resolved)" == "changeme"
+
+# RCON off but the REST API on (its default): the REST API authenticates with
+# AdminPassword too, so a default password must still be replaced.
+reset_state
+resolve_with false changeme true
+check "rest api alone still gets a generated password" test -s "$(password_file)"
+check "rest api alone: the default is not kept" test "$(resolved)" != "changeme"
 
 if [[ ${CHECKS_FAILED} -gt 0 ]]; then
     log_test_fail "admin_password (unit): ${CHECKS_FAILED} check(s) failed"

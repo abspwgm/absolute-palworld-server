@@ -1,0 +1,29 @@
+#!/bin/bash
+# =============================================================================
+# Call the running server's REST API
+# =============================================================================
+#   docker exec palworld-server /opt/palworld/scripts/palworld-api info
+#   docker exec palworld-server /opt/palworld/scripts/palworld-api players
+#   docker exec palworld-server /opt/palworld/scripts/palworld-api metrics
+#
+# GETs /v1/api/<endpoint> as the server's admin, with the server's own admin
+# password (ADMIN_PASSWORD, or the one this image generated into
+# /config/admin_password), and prints the JSON reply. Exits 1 if the REST API
+# is disabled or unreachable, the password is refused, or no reply arrives in
+# time. The password is never printed or put on a command line.
+
+if ! source "${PALWORLD_SCRIPTS_PATH:-/opt/palworld/scripts}/common"; then
+    echo "[ERROR] Failed to source common functions" >&2
+    exit 1
+fi
+
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 <endpoint: info | players | metrics | settings>" >&2
+    exit 2
+fi
+
+if ! body="$(rest_api GET "$1")"; then
+    log_error "No reply to GET /v1/api/$1 (REST API disabled, unreachable, password refused, or timed out)" >&2
+    exit 1
+fi
+printf '%s\n' "${body}"
