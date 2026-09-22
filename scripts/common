@@ -374,9 +374,6 @@ generate_settings_file() {
     mkdir -p "${SETTINGS_PATH}"
 
     # Get boolean values
-    local is_public="True"
-    is_server_public || is_public="False"
-
     local rcon_enabled="False"
     is_rcon_enabled && rcon_enabled="True"
 

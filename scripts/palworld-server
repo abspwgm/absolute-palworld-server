@@ -25,6 +25,13 @@ build_server_args() {
     local query_port=$(($(get_server_port) + 16804))
     args="${args} -queryport=27015"
 
+    # A public server is listed in the in-game community server browser, and
+    # Palworld does that only with -publiclobby. SERVER_PUBLIC (default true)
+    # used to be computed and then never used, so no server was ever listed.
+    if is_server_public; then
+        args="${args} -publiclobby"
+    fi
+
     # Additional custom arguments
     if [[ -n "${SERVER_ARGS}" ]]; then
         args="${args} ${SERVER_ARGS}"

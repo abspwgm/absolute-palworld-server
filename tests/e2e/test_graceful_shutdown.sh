@@ -12,9 +12,9 @@
 # shutdown ladder were 120s, so SIGKILL raced the save anyway. The Rust image
 # had the same bug and the same test.
 #
-# The wrapper's output goes to /var/log/palworld/supervisor-palworld.log, never
-# to `docker logs`, so it is read out of the container with `docker cp`, which
-# also works once the container has stopped.
+# The wrapper's output goes to the container's stdout (supervisord.conf), so it
+# is read from `docker logs`, which also works once the container has stopped.
+# It used to go to a file, and reading that back gave this test nothing.
 
 set -e
 
@@ -27,11 +27,7 @@ CONTAINER="palworld-server"
 BUDGET=200
 
 wrapper_log() {
-    local tmp
-    tmp="$(mktemp -d)"
-    MSYS_NO_PATHCONV=1 docker cp "${CONTAINER}:/var/log/palworld/supervisor-palworld.log" "${tmp}/" >/dev/null 2>&1 || true
-    cat "${tmp}/supervisor-palworld.log" 2>/dev/null || true
-    rm -rf "${tmp}"
+    docker logs "${CONTAINER}" 2>&1 || true
 }
 
 restart_for_following_tests() {
